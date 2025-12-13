@@ -1,0 +1,27 @@
+# Build artifacts
+*.o
+*.so
+*.pyc
+imctermite
+main.cpp.cpp
+
+# Python build
+python/build/
+python/dist/
+python/*.so
+python/*.cpp
+python/lib/
+python/LICENSE
+python/README.md
+python/*.egg-info/
+__pycache__/
+
+# Git and editor
+.git/
+.venv/
+*.swp
+*.swo
+*~
+
+# Test outputs
+.pytest_cache/

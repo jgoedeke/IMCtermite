@@ -35,7 +35,7 @@ INST := /usr/local/bin
 # C++ and CLI tool
 
 # build executable
-$(EXE): check-tags $(GVSN) main.o
+$(EXE): check-tags main.o
 	$(CC) $(OPT) main.o -o $@
 
 # build main.cpp and include git version/commit tag
@@ -86,7 +86,7 @@ docker-run:
 #-----------------------------------------------------------------------------#
 # python
 
-python-build: check-tags $(GVSN)
+python-build: check-tags
 	make -C python/ build-inplace
 	cp python/imctermite*.so ./ -v
 
@@ -98,9 +98,28 @@ python-test:
 	PYTHONPATH=./ python python/examples/usage.py
 
 #-----------------------------------------------------------------------------#
+# tests
+
+test: $(EXE) python-build
+	@echo "Running all tests..."
+	@PYTHONPATH=./ pytest
+
+test-cli: $(EXE)
+	@echo "Running CLI tests..."
+	@PYTHONPATH=./ pytest tests/test_cli.py
+
+test-python: python-build
+	@echo "Running Python tests..."
+	@PYTHONPATH=./ pytest tests/test_python.py
+
+#-----------------------------------------------------------------------------#
 # clean
 
-clean: cpp-clean python-clean
+test-clean:
+	rm -rf .pytest_cache
+	find tests/ -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+clean: cpp-clean python-clean test-clean
 
 #-----------------------------------------------------------------------------#
 # github actions

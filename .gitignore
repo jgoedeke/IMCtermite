@@ -43,3 +43,6 @@ python/*.soc
 python/lib/
 python/*.cpp
 python/wheelhouse/
+
+__pycache__/
+.pytest_cache/

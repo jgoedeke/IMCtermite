@@ -1,21 +1,22 @@
-
-FROM debian:bullseye-20210111
+FROM debian:bullseye
 
 USER root
 
 RUN apt-get update && apt-get install -y \
     build-essential git vim \
     python3 python3-pip
-RUN python3 -m pip install cython
+RUN python3 -m pip install cython pytest
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 RUN g++ -v
 
-COPY ./ /IMCtermite/
+WORKDIR /IMCtermite
+COPY ./ .
 
 # install CLI tool
-RUN cd /IMCtermite && ls -lh && make install && ls -lh /usr/local/bin/imctermite
+RUN make install
 
 # install Python module
-RUN cd /IMCtermite && ls -lh && make cython-install
+RUN make python-build
 
 CMD ["sleep","infinity"]

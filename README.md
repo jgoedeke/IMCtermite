@@ -1,6 +1,7 @@
 
 [![LICENSE](https://img.shields.io/github/license/RecordEvolution/IMCtermite)](https://img.shields.io/github/license/RecordEvolution/IMCtermite)
 [![STARS](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)
+![Tests](https://github.com/RecordEvolution/IMCtermite/actions/workflows/test.yml/badge.svg)
 ![CI Build Wheel](https://github.com/RecordEvolution/IMCtermite/actions/workflows/pypi-deploy.yml/badge.svg?branch=&event=push)
 [![PYPI](https://img.shields.io/pypi/v/IMCtermite.svg)](https://pypi.org/project/imctermite/)
 
@@ -27,6 +28,7 @@ Python module to integrate the _.raw_  format into any ETL workflow.
 * [File format](#Fileformat)
 * [Build and Installation](#Installation)
 * [Usage and Examples](#Usage)
+* [Testing](#Testing)
 * [References](#References)
 
 ## File format
@@ -216,6 +218,12 @@ print(channels)
 A more complete [example](python/examples/usage.py), including the methods for
 obtaining the channels, i.a. their data and/or directly printing them to files,
 can be found in the `python/examples` folder.
+
+## Testing
+
+Run end-to-end tests: `make test`
+
+See [tests/README.md](tests/README.md) for details.
 
 ## References
 

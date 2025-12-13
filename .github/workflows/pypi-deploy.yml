@@ -8,9 +8,13 @@ on:
 
 jobs:
 
+  test:
+    uses: ./.github/workflows/test.yml
+
   build_setup:
     name: Prepare environment for wheel builds
     runs-on: ubuntu-24.04
+    needs: [test]
     steps:
       - uses: actions/checkout@v2
       - name: Prepare wheel build
