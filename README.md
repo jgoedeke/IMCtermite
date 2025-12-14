@@ -221,25 +221,7 @@ can be found in the `python/examples` folder.
 
 ### Chunked NumPy export (fast path)
 
-For large files, you can iterate over channel data in chunks as NumPy arrays. This avoids creating large Python lists and allows for streaming processing (e.g. writing to Parquet).
-
-```python
-import imctermite
-import numpy as np
-
-imcraw = imctermite.imctermite(b"samples/large_file.raw")
-channels = imcraw.get_channels(False)
-uuid = channels[0]['uuid'].encode('utf-8')
-
-# Iterate over channel data in chunks of 1 million samples
-for chunk in imcraw.iter_channel_numpy(uuid, include_x=True, chunk_rows=1_000_000):
-    y_data = chunk['y'] # NumPy array
-    x_data = chunk.get('x') # NumPy array (if include_x=True)
-    start_index = chunk['start']
-    
-    # Process chunk (e.g. write to parquet)
-    print(f"Processed chunk starting at {start_index}, size {len(y_data)}")
-```
+For large files, you can iterate over channel data in chunks as NumPy arrays. This avoids creating large Python lists and allows for streaming processing (e.g. writing to Parquet). See [`python/examples/usage_numpy_chunks.py`](python/examples/usage_numpy_chunks.py) for a complete example.
 
 ## Testing
 

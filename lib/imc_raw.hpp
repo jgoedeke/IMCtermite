@@ -20,11 +20,13 @@
 namespace imc
 {
   struct channel_chunk {
-    std::vector<double> x;
-    std::vector<double> y;
+    std::vector<unsigned char> x_bytes;
+    std::vector<unsigned char> y_bytes;
     unsigned long int start;
     unsigned long int count;
     bool has_x;
+    int x_type;
+    int y_type;
   };
 
   class raw
@@ -414,8 +416,21 @@ namespace imc
       }
     }
 
+    // get numeric type of a channel
+    int get_channel_numeric_type(std::string uuid)
+    {
+      if ( channels_.count(uuid) )
+      {
+        return (int)channels_.at(uuid).ydatatp_;
+      }
+      else
+      {
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+    }
+
     // read a chunk of channel data
-    channel_chunk read_channel_chunk(std::string uuid, unsigned long int start, unsigned long int count, bool include_x)
+    channel_chunk read_channel_chunk(std::string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
       if ( !channels_.count(uuid) )
       {
@@ -427,7 +442,7 @@ namespace imc
 
       if ( start >= total_len )
       {
-         return { {}, {}, start, 0, include_x };
+         return { {}, {}, start, 0, include_x, 0, 0 };
       }
 
       unsigned long int end = start + count;
@@ -438,20 +453,108 @@ namespace imc
       chunk.start = start;
       chunk.count = actual_count;
       chunk.has_x = include_x;
-      chunk.y.reserve(actual_count);
-      if (include_x) chunk.x.reserve(actual_count);
 
-      for (unsigned long int i = 0; i < actual_count; ++i)
-      {
-        chunk.y.push_back(ch.ydata_[start + i].as_double());
-        if (include_x)
-        {
-           if (start + i < ch.xdata_.size())
-             chunk.x.push_back(ch.xdata_[start + i].as_double());
-           else
-             chunk.x.push_back(0.0);
-        }
+      // Handle Y data
+      if (raw_mode) {
+          // Raw mode: read bytes directly from buffer
+          int type = (int)ch.ydatatp_;
+          unsigned long int bytes_per_sample = ch.ysignbits_ / 8;
+          
+          if (mapblocks_.count(ch.chnenv_.CSuuid_) == 0) {
+              throw std::runtime_error("CS block not found for channel");
+          }
+          imc::block& cs_block = mapblocks_.at(ch.chnenv_.CSuuid_);
+          std::vector<imc::parameter> prms = cs_block.get_parameters();
+          if (prms.size() < 4) throw std::runtime_error("Invalid CS block parameters");
+          unsigned long int buffstrt = prms[3].begin();
+          
+          unsigned long int abs_start = buffstrt + ch.ybuffer_offset_ + 1 + start * bytes_per_sample;
+          unsigned long int byte_count = actual_count * bytes_per_sample;
+          
+          if (abs_start + byte_count > buffer_.size()) {
+               throw std::runtime_error("Buffer read out of bounds");
+          }
+          
+          if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte (uint64)
+              chunk.y_type = 13; // Keep original type ID, but data is promoted
+              chunk.y_bytes.resize(actual_count * 8);
+              uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
+              
+              for (unsigned long int i = 0; i < actual_count; ++i) {
+                  unsigned long int src_idx = abs_start + i * 6;
+                  uint64_t val = 0;
+                  // Assuming Little Endian storage in file
+                  for (int b = 0; b < 6; ++b) {
+                      val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                  }
+                  dest[i] = val;
+              }
+          } else {
+              chunk.y_type = type;
+              chunk.y_bytes.resize(byte_count);
+              std::copy(buffer_.begin() + abs_start, buffer_.begin() + abs_start + byte_count, chunk.y_bytes.begin());
+          }
+      } else {
+          // Scaled mode: convert to double
+          chunk.y_type = 8; // imc::numtype::ddouble
+          chunk.y_bytes.resize(actual_count * sizeof(double));
+          double* ptr = reinterpret_cast<double*>(chunk.y_bytes.data());
+          
+          for (unsigned long int i = 0; i < actual_count; ++i) {
+              ptr[i] = ch.ydata_[start + i].as_double();
+          }
       }
+
+      // Handle X data
+      if (include_x) {
+          if (ch.dimension_ == 2 && raw_mode) {
+              // XY channel, raw mode
+              int type = (int)ch.xdatatp_;
+              unsigned long int bytes_per_sample = ch.xsignbits_ / 8;
+              
+              imc::block& cs_block = mapblocks_.at(ch.chnenv_.CSuuid_);
+              std::vector<imc::parameter> prms = cs_block.get_parameters();
+              unsigned long int buffstrt = prms[3].begin();
+              
+              unsigned long int abs_start = buffstrt + ch.xbuffer_offset_ + 1 + start * bytes_per_sample;
+              unsigned long int byte_count = actual_count * bytes_per_sample;
+              
+              if (abs_start + byte_count > buffer_.size()) {
+                   throw std::runtime_error("Buffer read out of bounds (X)");
+              }
+              
+              if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte
+                  chunk.x_type = 13; // Keep original type ID
+                  chunk.x_bytes.resize(actual_count * 8);
+                  uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
+                  for (unsigned long int i = 0; i < actual_count; ++i) {
+                      unsigned long int src_idx = abs_start + i * 6;
+                      uint64_t val = 0;
+                      for (int b = 0; b < 6; ++b) {
+                          val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                      }
+                      dest[i] = val;
+                  }
+              } else {
+                  chunk.x_type = type;
+                  chunk.x_bytes.resize(byte_count);
+                  std::copy(buffer_.begin() + abs_start, buffer_.begin() + abs_start + byte_count, chunk.x_bytes.begin());
+              }
+          } else {
+              // Generated X or scaled X
+              chunk.x_type = 8; // imc::numtype::ddouble
+              chunk.x_bytes.resize(actual_count * sizeof(double));
+              double* ptr = reinterpret_cast<double*>(chunk.x_bytes.data());
+              
+              for (unsigned long int i = 0; i < actual_count; ++i) {
+                  if (start + i < ch.xdata_.size())
+                      ptr[i] = ch.xdata_[start + i].as_double();
+                  else
+                      ptr[i] = 0.0;
+              }
+          }
+      }
+
       return chunk;
     }
 
