@@ -19,6 +19,14 @@
 
 namespace imc
 {
+  struct channel_chunk {
+    std::vector<double> x;
+    std::vector<double> y;
+    unsigned long int start;
+    unsigned long int count;
+    bool has_x;
+  };
+
   class raw
   {
     // (path of) raw-file and its basename
@@ -391,6 +399,60 @@ namespace imc
       }
 
       return channels;
+    }
+
+    // get length of a channel
+    unsigned long int get_channel_length(std::string uuid)
+    {
+      if ( channels_.count(uuid) )
+      {
+        return (unsigned long int)channels_.at(uuid).ydata_.size();
+      }
+      else
+      {
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+    }
+
+    // read a chunk of channel data
+    channel_chunk read_channel_chunk(std::string uuid, unsigned long int start, unsigned long int count, bool include_x)
+    {
+      if ( !channels_.count(uuid) )
+      {
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      imc::channel& ch = channels_.at(uuid);
+      unsigned long int total_len = ch.ydata_.size();
+
+      if ( start >= total_len )
+      {
+         return { {}, {}, start, 0, include_x };
+      }
+
+      unsigned long int end = start + count;
+      if ( end > total_len ) end = total_len;
+      unsigned long int actual_count = end - start;
+
+      channel_chunk chunk;
+      chunk.start = start;
+      chunk.count = actual_count;
+      chunk.has_x = include_x;
+      chunk.y.reserve(actual_count);
+      if (include_x) chunk.x.reserve(actual_count);
+
+      for (unsigned long int i = 0; i < actual_count; ++i)
+      {
+        chunk.y.push_back(ch.ydata_[start + i].as_double());
+        if (include_x)
+        {
+           if (start + i < ch.xdata_.size())
+             chunk.x.push_back(ch.xdata_[start + i].as_double());
+           else
+             chunk.x.push_back(0.0);
+        }
+      }
+      return chunk;
     }
 
     // print single specific channel

@@ -1,7 +1,9 @@
 # distutils: language = c++
 # cython: language_level = 3
 
-from imctermite cimport cppimctermite
+from imctermite cimport cppimctermite, channel_chunk
+cimport numpy as cnp
+import numpy as np
 
 import json as jn
 import decimal
@@ -34,6 +36,34 @@ cdef class imctermite:
     chnlst = self.cppimc.get_channels(True,include_data)
     chnlstjn = [jn.loads(chn.decode(get_codepage(chn),errors="ignore")) for chn in chnlst]
     return chnlstjn
+
+  def iter_channel_numpy(self, string channeluuid, bool include_x=True, int chunk_rows=1000000):
+    cdef unsigned long int total_len = self.cppimc.get_channel_length(channeluuid)
+    cdef unsigned long int start = 0
+    cdef channel_chunk chunk
+    cdef cnp.ndarray x_arr
+    cdef cnp.ndarray y_arr
+
+    while start < total_len:
+        chunk = self.cppimc.read_channel_chunk(channeluuid, start, chunk_rows, include_x)
+        
+        # Create numpy arrays from vectors
+        y_arr = np.array(chunk.y, dtype=np.float64)
+        
+        result = {
+            "start": chunk.start,
+            "y": y_arr
+        }
+        
+        if include_x:
+            x_arr = np.array(chunk.x, dtype=np.float64)
+            result["x"] = x_arr
+            
+        yield result
+        
+        start += chunk.count
+        if chunk.count == 0:
+            break
 
   # print single channel/all channels
   def print_channel(self, string channeluuid, string outputfile, char delimiter):
