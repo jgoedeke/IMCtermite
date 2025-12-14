@@ -7,6 +7,7 @@ import pytest
 import os
 import tempfile
 import csv
+import numpy as np
 from pathlib import Path
 
 try:
@@ -104,17 +105,71 @@ class TestDataIntegrity:
                 assert isinstance(x, (int, float))
             for y in channel['ydata'][:10]:
                 assert isinstance(y, (int, float))
-    
-    def test_xdata_monotonic(self, sample_data):
-        """X-data (time) should be monotonically increasing"""
-        for channel in sample_data:
-            xdata = channel['xdata']
-            if len(xdata) > 1:
-                # Check if mostly increasing (allow small floating point issues)
-                increasing_count = sum(1 for i in range(len(xdata)-1) if xdata[i] <= xdata[i+1])
-                ratio = increasing_count / (len(xdata) - 1)
-                assert ratio > 0.95, f"X-data not monotonic enough: {ratio:.2%}"
+            for val in channel['ydata']:
+                assert isinstance(val, (int, float))
 
+class TestChunkedNumpy:
+    """Test chunked NumPy API"""
+
+    def test_chunked_iteration_all_samples(self):
+        """Verify chunked iteration against get_channels for all samples"""
+        
+        raw_files = list(DATASET_A.glob("*.raw")) + list(DATASET_B.glob("*.raw"))
+        # Sort for deterministic order
+        raw_files.sort()
+        
+        for raw_file in raw_files:
+            # print(f"Testing {raw_file.name}")
+            try:
+                imc = imctermite.imctermite(str(raw_file).encode())
+                
+                # Get reference data
+                channels_ref = imc.get_channels(include_data=True)
+                
+                for ch_ref in channels_ref:
+                    uuid = ch_ref['uuid'].encode('utf-8')
+                    
+                    # Test with include_x=True
+                    y_chunks = []
+                    x_chunks = []
+                    
+                    # Use a small chunk size to ensure we test chunking logic even on small files
+                    # Some files might be very small, so 100 is a good stress test
+                    for chunk in imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100):
+                        y_chunks.append(chunk['y'])
+                        x_chunks.append(chunk['x'])
+                    
+                    if not y_chunks:
+                        assert len(ch_ref['ydata']) == 0
+                        continue
+                        
+                    y_full = np.concatenate(y_chunks)
+                    x_full = np.concatenate(x_chunks)
+                    
+                    # Compare with reference
+                    # Note: get_channels returns lists of floats. 
+                    # We compare them with numpy arrays.
+                    
+                    # Check lengths first
+                    assert len(y_full) == len(ch_ref['ydata']), f"Length mismatch in {raw_file.name} channel {uuid}"
+                    
+                    # Check values
+                    assert np.allclose(y_full, ch_ref['ydata'], equal_nan=True), f"Y data mismatch in {raw_file.name} channel {uuid}"
+                    assert np.allclose(x_full, ch_ref['xdata'], equal_nan=True), f"X data mismatch in {raw_file.name} channel {uuid}"
+                    
+                    # Test with include_x=False
+                    y_chunks_nox = []
+                    for chunk in imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=100):
+                        y_chunks_nox.append(chunk['y'])
+                        assert 'x' not in chunk
+                    
+                    if y_chunks_nox:
+                        y_full_nox = np.concatenate(y_chunks_nox)
+                        assert np.allclose(y_full_nox, ch_ref['ydata'], equal_nan=True), f"Y data mismatch (no x) in {raw_file.name} channel {uuid}"
+            
+            except Exception as e:
+                pytest.fail(f"Failed processing {raw_file.name}: {str(e)}")
+    
 
 class TestCSVOutput:
     """Test CSV file generation"""

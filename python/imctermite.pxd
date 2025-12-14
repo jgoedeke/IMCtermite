@@ -6,6 +6,13 @@ from libcpp cimport bool
 
 cdef extern from "lib/imc_raw.hpp" namespace "imc":
 
+  cdef struct channel_chunk:
+    vector[double] x
+    vector[double] y
+    unsigned long int start
+    unsigned long int count
+    bool has_x
+
   cdef cppclass cppimctermite "imc::raw":
 
     # constructor(s)
@@ -17,6 +24,12 @@ cdef extern from "lib/imc_raw.hpp" namespace "imc":
 
     # get JSON list of channels
     vector[string] get_channels(bool json, bool data) except +
+
+    # get length of a channel
+    unsigned long int get_channel_length(string uuid) except +
+
+    # read a chunk of channel data
+    channel_chunk read_channel_chunk(string uuid, unsigned long int start, unsigned long int count, bool include_x) except +
 
     # print single channel/all channels
     void print_channel(string channeluuid, string outputdir, char delimiter) except +

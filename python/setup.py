@@ -1,6 +1,7 @@
 from setuptools import Extension, setup
 from Cython.Build import cythonize
 import sys
+import numpy
 
 print("building on platform: "+sys.platform)
 
@@ -13,6 +14,7 @@ cmpArgs = {
 extension = Extension(
     "imctermite",
     sources=["imctermite.pyx"],
+    include_dirs=[numpy.get_include()],
     extra_compile_args=cmpArgs[sys.platform]
 )
 
