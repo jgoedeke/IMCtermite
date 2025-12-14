@@ -305,6 +305,16 @@ class TestDataRegression:
             'ydata_first': [956.013793945, 955.484924316, 955.487670898],
             'ydata_last': [866.840881348, 866.91619873, 866.985290527],  # [-3], [-2], [-1]
         }),
+        # sample_x_precision.raw - Regression test for x-axis precision with offset
+        ("sample_x_precision.raw", {
+            'num_channels': 1,
+            'data_length': 33596,
+            'xstepwidth': 0.01,
+            'xoffset': 0.005,
+            'xdata_first': [0.005, 0.015, 0.025],
+            'ydata_first': [0.0, 0.0, 0.0],
+            'ydata_last': [0.0, 0.0, 0.0],
+        }),
         # XY_dataset_example.dat - Different .dat format with explicit X-Y data
         ("XY_dataset_example.dat", {
             'num_channels': 1,

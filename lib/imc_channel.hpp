@@ -8,6 +8,7 @@
 #include "imc_block.hpp"
 #include <sstream>
 #include <math.h>
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <time.h>
@@ -510,7 +511,9 @@ namespace imc
         process_data(ydata_, ynum_values, ydatatp_, yCSbuffer);
 
         // find appropriate precision for "xdata_" by means of "xstepwidth_"
-        xprec_ = (xstepwidth_ > 0 ) ? (int)ceil(fabs(log10(xstepwidth_))) : 10;
+        int prec_step = (xstepwidth_ > 0 ) ? (int)ceil(fabs(log10(xstepwidth_))) : 10;
+        int prec_start = (fabs(xstart_) > 0 && fabs(xstart_) < 1.0) ? (int)ceil(fabs(log10(fabs(xstart_)))) : 0;
+        xprec_ = std::max(prec_step, prec_start);
 
         // fill xdata_
         for ( unsigned long int i = 0; i < ynum_values; i++ )
