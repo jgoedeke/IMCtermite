@@ -716,12 +716,15 @@ namespace imc
              <<"\",\"codepage\":\""<<codepage_
              <<"\",\"yname\":\""<<prepjsonstr(yname_)
              <<"\",\"yunit\":\""<<prepjsonstr(yunit_)
+             <<"\",\"datatype\":\""<<ydatatp_
              <<"\",\"significantbits\":\""<<ysignbits_
              <<"\",\"buffer-size\":\""<<ybuffer_size_
              <<"\",\"xname\":\""<<prepjsonstr(xname_)
              <<"\",\"xunit\":\""<<prepjsonstr(xunit_)
              <<"\",\"xstepwidth\":\""<<xstepwidth_
              <<"\",\"xoffset\":\""<<xstart_
+             <<"\",\"factor\":\""<<yfactor_
+             <<"\",\"offset\":\""<<yoffset_
              <<"\",\"group\":{"<<"\"index\":\""<<group_index_
                                <<"\",\"name\":\""<<group_name_
                                <<"\",\"comment\":\""<<group_comment_<<"\""<<"}";

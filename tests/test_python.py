@@ -114,9 +114,9 @@ class TestChunkedNumpy:
     def test_chunked_iteration_all_samples(self):
         """Verify chunked iteration against get_channels for all samples"""
         
-        raw_files = list(DATASET_A.glob("*.raw")) + list(DATASET_B.glob("*.raw"))
-        # Sort for deterministic order
-        raw_files.sort()
+        # Get all .raw and .dat files recursively
+        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
+                           list(SAMPLES_DIR.glob("**/*.dat")))
         
         for raw_file in raw_files:
             # print(f"Testing {raw_file.name}")
@@ -135,7 +135,7 @@ class TestChunkedNumpy:
                     
                     # Use a small chunk size to ensure we test chunking logic even on small files
                     # Some files might be very small, so 100 is a good stress test
-                    for chunk in imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100):
+                    for chunk in imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100, mode="scaled"):
                         y_chunks.append(chunk['y'])
                         x_chunks.append(chunk['x'])
                     
@@ -159,13 +159,28 @@ class TestChunkedNumpy:
                     
                     # Test with include_x=False
                     y_chunks_nox = []
-                    for chunk in imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=100):
+                    for chunk in imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=100, mode="scaled"):
                         y_chunks_nox.append(chunk['y'])
                         assert 'x' not in chunk
                     
                     if y_chunks_nox:
                         y_full_nox = np.concatenate(y_chunks_nox)
                         assert np.allclose(y_full_nox, ch_ref['ydata'], equal_nan=True), f"Y data mismatch (no x) in {raw_file.name} channel {uuid}"
+
+                    # Test raw mode (basic check that it runs and returns correct length)
+                    # We can't easily verify values without reimplementing the scaling logic,
+                    # but we can check that it returns something valid.
+                    y_chunks_raw = []
+                    for chunk in imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=100, mode="raw"):
+                        y_chunks_raw.append(chunk['y'])
+                        # Check that dtype is not float64 unless it really is float data
+                        # Most samples are likely int16 or similar
+                        # print(f"Raw dtype: {chunk['y'].dtype}")
+                    
+                    if y_chunks_raw:
+                        y_full_raw = np.concatenate(y_chunks_raw)
+                        assert len(y_full_raw) == len(ch_ref['ydata']), f"Raw length mismatch in {raw_file.name} channel {uuid}"
+
             
             except Exception as e:
                 pytest.fail(f"Failed processing {raw_file.name}: {str(e)}")
@@ -248,12 +263,8 @@ class TestMultipleFiles:
             pytest.skip(f"Samples directory not found: {SAMPLES_DIR}")
         
         # Get all .raw and .dat files recursively
-        files_to_test = sorted(list(SAMPLES_DIR.glob("*.raw")) + 
-                               list(SAMPLES_DIR.glob("*.dat")) +
-                               list(SAMPLES_DIR.glob("**/*.raw")) + 
+        files_to_test = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
                                list(SAMPLES_DIR.glob("**/*.dat")))
-        # Remove duplicates (files in root will be in both patterns)
-        files_to_test = sorted(set(files_to_test))
         
         if len(files_to_test) == 0:
             pytest.skip("No .raw or .dat files in samples directory")
@@ -278,11 +289,8 @@ class TestMultipleFiles:
             pytest.skip(f"Samples directory not found: {SAMPLES_DIR}")
         
         # Get all .raw and .dat files recursively
-        files_to_test = sorted(list(SAMPLES_DIR.glob("*.raw")) + 
-                               list(SAMPLES_DIR.glob("*.dat")) +
-                               list(SAMPLES_DIR.glob("**/*.raw")) + 
+        files_to_test = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
                                list(SAMPLES_DIR.glob("**/*.dat")))
-        files_to_test = sorted(set(files_to_test))
         
         if len(files_to_test) == 0:
             pytest.skip("No .raw or .dat files in samples directory")
