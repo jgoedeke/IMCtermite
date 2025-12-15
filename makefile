@@ -18,7 +18,7 @@ MIB = $(foreach dir,$(KIB),-I $(dir))
 
 # choose compiler and its options
 CC = g++ -std=c++17
-OPT = -O3 -Wall -Wconversion -Wpedantic -Werror -Wunused-variable -Wsign-compare
+OPT = -O3 -Wall -Wconversion -Wpedantic -Werror -Wunused-variable -Wsign-compare -static
 
 # determine git version/commit and release tag
 GTAG := $(shell git tag -l --sort=version:refname | tail -n1 | sed "s/$^v//g")

@@ -12,10 +12,18 @@ import platform
 
 # auxiliary function for codepage conversion
 def get_codepage(chn) :
-    if platform == 'Windows' :
-        chndec = jn.loads(chn.decode(errors="ignore"))
-        chncdp = chndec["codepage"]
-        return 'utf-8' if chncdp is None else chncdp
+    if platform.system() == 'Windows' :
+        try:
+            chndec = jn.loads(chn.decode(errors="ignore"))
+            chncdp = chndec.get("codepage")
+            if not chncdp:
+                return 'utf-8'
+            # If it's a number like "1252", Python expects "cp1252"
+            if str(chncdp).isdigit():
+                return 'cp' + str(chncdp)
+            return str(chncdp)
+        except:
+            return 'utf-8'
     else :
         return 'utf-8'
 
