@@ -34,7 +34,8 @@ namespace imc
 
     // name and buffer of associated raw file
     std::string raw_file_;
-    const std::vector<unsigned char>* buffer_;
+    const unsigned char* buffer_;
+    size_t buffer_size_;
 
     // offset of first/last byte of parameters in block (separated by ch_sep_)
     // w.r.t. to first byte of block (=0)
@@ -44,7 +45,7 @@ namespace imc
 
     // constructor
     block(key thekey, unsigned long int begin, unsigned long int end,
-                      std::string raw_file, const std::vector<unsigned char>* buffer):
+                      std::string raw_file, const unsigned char* buffer, size_t buffer_size):
       thekey_(thekey), uuid_(std::to_string(begin))
     {
       if ( !imc::check_key(thekey) ) throw std::logic_error("unknown key");
@@ -56,14 +57,15 @@ namespace imc
       }
       raw_file_ = raw_file;
       buffer_ = buffer;
+      buffer_size_ = buffer_size;
 
       // make sure "end_" does not exceed buffer size due to invalid "length" parameter of block
-      if ( end_ > buffer_->size() )
+      if ( end_ > buffer_size_ )
       {
         std::cout<<"WARNING: invalid length parameter in "<<thekey_.name_<<"-block "
-                 <<"(block-end:"<<end_<<",buffer-size:"<<buffer_->size()<<")"
+                 <<"(block-end:"<<end_<<",buffer-size:"<<buffer_size_<<")"
                  <<" => resetting block-end to buffer-size\n";
-        end_ = (unsigned long int)(buffer_->size());
+        end_ = (unsigned long int)(buffer_size_);
       }
 
       try {
@@ -86,7 +88,7 @@ namespace imc
       for ( unsigned long int b = begin_;
         b < end_ && ( ! (thekey_.name_== "CS") || count < 4 ); b++ )
       {
-        if ( buffer_->at(b) == imc::ch_sep_ )
+        if ( buffer_[b] == imc::ch_sep_ )
         {
           // define range of parameter with first byte = ch_sep_
           parameters_.push_back(imc::parameter(b,b));
@@ -124,8 +126,8 @@ namespace imc
       {
         throw std::logic_error("inconsistent parameter offsets");
       }
-      std::vector<unsigned char> parambuff(buffer_->begin()+begin_+param.begin(),
-                                           buffer_->begin()+begin_+param.end());
+      std::vector<unsigned char> parambuff(buffer_+begin_+param.begin(),
+                                           buffer_+begin_+param.end());
       return parambuff;
     }
 
@@ -140,7 +142,7 @@ namespace imc
       std::string prm("");
       for ( unsigned long int i = param.begin()+1; i <= param.end(); i++ )
       {
-        prm.push_back( (char)((*buffer_)[i]) );
+        prm.push_back( (char)(buffer_[i]) );
       }
       return prm;
     }
@@ -163,7 +165,7 @@ namespace imc
         <<std::setw(width)<<std::left<<"begin:"<<begin_<<"\n"
         <<std::setw(width)<<std::left<<"end:"<<end_<<"\n"
         <<std::setw(width)<<std::left<<"rawfile:"<<raw_file_<<"\n"
-        <<std::setw(width)<<std::left<<"buffersize:"<<buffer_->size()<<"\n"
+        <<std::setw(width)<<std::left<<"buffersize:"<<buffer_size_<<"\n"
         <<std::setw(width)<<std::left<<"parameters:"<<prsstr<<"\n";
 
       return ss.str();

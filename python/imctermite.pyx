@@ -21,12 +21,16 @@ def get_codepage(chn) :
 
 cdef class imctermite:
 
-  # C++ instance of class => stack allocated (requires nullary constructor!)
-  cdef cppimctermite cppimc
+  # C++ instance of class
+  cdef cppimctermite* cppimc
 
   # constructor
   def __cinit__(self, string rawfile):
-    self.cppimc = cppimctermite(rawfile)
+    self.cppimc = new cppimctermite(rawfile)
+
+  def __dealloc__(self):
+    if self.cppimc != NULL:
+        del self.cppimc
 
   # provide raw file
   def submit_file(self,string rawfile):

@@ -7,35 +7,24 @@
 #include <filesystem>
 #include <iostream>
 
-// #include "hexshow.hpp"
+#include "imc_buffer.hpp"
 #include "imc_key.hpp"
 #include "imc_block.hpp"
 #include "imc_datatype.hpp"
 #include "imc_object.hpp"
-#include "imc_result.hpp"
 #include "imc_channel.hpp"
 
 //---------------------------------------------------------------------------//
 
 namespace imc
 {
-  struct channel_chunk {
-    std::vector<unsigned char> x_bytes;
-    std::vector<unsigned char> y_bytes;
-    unsigned long int start;
-    unsigned long int count;
-    bool has_x;
-    int x_type;
-    int y_type;
-  };
-
   class raw
   {
     // (path of) raw-file and its basename
     std::string raw_file_, file_name_;
 
     // buffer of raw-file
-    std::vector<unsigned char> buffer_;
+    imc::MemoryMappedFile buffer_;
 
     // list and map of imc-blocks
     std::vector<imc::block> rawblocks_;
@@ -53,6 +42,12 @@ namespace imc
     raw() { };
     raw(std::string raw_file): raw_file_(raw_file) { set_file(raw_file); };
 
+    // Delete copy and move operations because of self-referential pointers in channels_
+    raw(const raw&) = delete;
+    raw& operator=(const raw&) = delete;
+    raw(raw&&) = delete;
+    raw& operator=(raw&&) = delete;
+
     // provide new raw-file
     void set_file(std::string raw_file)
     {
@@ -68,16 +63,9 @@ namespace imc
     // open file and stream data into buffer
     void fill_buffer()
     {
-      buffer_.clear();
-
       // open file and put data in buffer
       try {
-        std::ifstream fin(raw_file_.c_str(),std::ifstream::binary);
-        if ( !fin.good() ) throw std::runtime_error("failed to open file");
-        std::vector<unsigned char> buffer((std::istreambuf_iterator<char>(fin)),
-                                          (std::istreambuf_iterator<char>()));
-        buffer_ = buffer;
-        fin.close();
+        buffer_.map(raw_file_);
       } catch ( const std::exception& e ) {
         throw std::runtime_error(
           std::string("failed to open raw-file and stream data in buffer: ") + e.what()
@@ -93,31 +81,33 @@ namespace imc
       // reset counter to identify computational complexity
       cplxcnt_ = 0;
 
+      const unsigned char* data = buffer_.data();
+      size_t size = buffer_.size();
+
       // start parsing raw-blocks in buffer
-      for ( std::vector<unsigned char>::iterator it=buffer_.begin();
-                                                 it!=buffer_.end(); ++it )
+      for ( unsigned long int i = 0; i < size; ++i )
       {
         cplxcnt_++;
 
         // check for "magic byte"
-        if ( *it == ch_bgn_ )
+        if ( data[i] == ch_bgn_ )
         {
           // check for (non)critical key
-          if ( *(it+1) == imc::key_crit_ || *(it+1) == imc::key_non_crit_ )
+          if ( data[i+1] == imc::key_crit_ || data[i+1] == imc::key_non_crit_ )
           {
             // compose (entire) key
-            std::string newkey = { (char)*(it+1), (char)*(it+2) };
-            imc::key itkey(*(it+1) == imc::key_crit_,newkey);
+            std::string newkey = { (char)data[i+1], (char)data[i+2] };
+            imc::key itkey(data[i+1] == imc::key_crit_,newkey);
 
             // expecting ch_sep_ after key
-            if ( *(it+3) == ch_sep_ )
+            if ( data[i+3] == ch_sep_ )
             {
               // extract key version
               std::string vers("");
               unsigned long int pos = 4;
-              while ( *(it+pos) != ch_sep_ )
+              while ( data[i+pos] != ch_sep_ )
               {
-                vers.push_back((char)*(it+pos));
+                vers.push_back((char)data[i+pos]);
                 pos++;
               }
               int version = std::stoi(vers);
@@ -132,9 +122,9 @@ namespace imc
                 // get block length
                 std::string leng("");
                 pos++;
-                while ( *(it+pos) != ch_sep_ )
+                while ( data[i+pos] != ch_sep_ )
                 {
-                  leng.push_back((char)*(it+pos));
+                  leng.push_back((char)data[i+pos]);
                   pos++;
                 }
                 unsigned long int length = std::stoul(leng);
@@ -142,23 +132,23 @@ namespace imc
                 // declare and initialize corresponding key and block
                 // imc::key bkey( *(it+1)==imc::key_crit_ , newkey,
                 //                imc::keys.at(newkey).description_, version );
-                imc::block blk(itkey,(unsigned long int)(it-buffer_.begin()),
-                                     (unsigned long int)(it-buffer_.begin()+pos+1+length),
-                                     raw_file_, &buffer_);
+                imc::block blk(itkey,i,
+                                     i+pos+1+length,
+                                     raw_file_, data, size);
 
                 // add block to list
                 rawblocks_.push_back(blk);
 
                 // skip the remaining block according to its length
-                if ( (unsigned long int)(it-buffer_.begin()+length) < (unsigned long int)(buffer_.size()) )
+                if ( i+length < size )
                 {
-                  std::advance(it,length);
+                  i += length;
                 }
               }
               else
               {
                 // all critical must be known !! while a noncritical may be ignored
-                if ( *(it+1) == imc::key_crit_ )
+                if ( data[i+1] == imc::key_crit_ )
                 {
                   throw std::runtime_error(
                     std::string("unknown critical key: ") + newkey + std::to_string(version)
@@ -175,7 +165,7 @@ namespace imc
             {
               throw std::runtime_error(
                   std::string("invalid block or corrupt buffer at byte: ")
-                + std::to_string(it+3-buffer_.begin())
+                + std::to_string(i+3)
               );
             }
           }
@@ -242,7 +232,7 @@ namespace imc
           // a new component group is started
           // TODO: can we avoid to parse the whole component here?
           imc::component component;
-          component.parse(&buffer_, blk.get_parameters());
+          component.parse(buffer_.data(), blk.get_parameters());
           if ( component.component_index_ == 1 ) compenv_ptr = &chnenv.compenv1_;
           else if ( component.component_index_ == 2 ) compenv_ptr = &chnenv.compenv2_;
           else throw std::runtime_error("invalid component index in CC block");
@@ -293,7 +283,7 @@ namespace imc
 
             // create channel object and add it to the map of channels
             channels_.insert( std::pair<std::string,imc::channel>
-              (chnenv.CNuuid_,imc::channel(chnenv,&mapblocks_,&buffer_))
+              (chnenv.CNuuid_,imc::channel(chnenv,&mapblocks_,buffer_.data()))
             );
 
             // reset channel uuid
@@ -408,7 +398,7 @@ namespace imc
     {
       if ( channels_.count(uuid) )
       {
-        return (unsigned long int)channels_.at(uuid).ydata_.size();
+        return channels_.at(uuid).number_of_samples_;
       }
       else
       {
@@ -437,125 +427,7 @@ namespace imc
         throw std::runtime_error(std::string("channel does not exist:") + uuid);
       }
 
-      imc::channel& ch = channels_.at(uuid);
-      unsigned long int total_len = ch.ydata_.size();
-
-      if ( start >= total_len )
-      {
-         return { {}, {}, start, 0, include_x, 0, 0 };
-      }
-
-      unsigned long int end = start + count;
-      if ( end > total_len ) end = total_len;
-      unsigned long int actual_count = end - start;
-
-      channel_chunk chunk;
-      chunk.start = start;
-      chunk.count = actual_count;
-      chunk.has_x = include_x;
-
-      // Handle Y data
-      if (raw_mode) {
-          // Raw mode: read bytes directly from buffer
-          int type = (int)ch.ydatatp_;
-          unsigned long int bytes_per_sample = ch.ysignbits_ / 8;
-          
-          if (mapblocks_.count(ch.chnenv_.CSuuid_) == 0) {
-              throw std::runtime_error("CS block not found for channel");
-          }
-          imc::block& cs_block = mapblocks_.at(ch.chnenv_.CSuuid_);
-          std::vector<imc::parameter> prms = cs_block.get_parameters();
-          if (prms.size() < 4) throw std::runtime_error("Invalid CS block parameters");
-          unsigned long int buffstrt = prms[3].begin();
-          
-          unsigned long int abs_start = buffstrt + ch.ybuffer_offset_ + 1 + start * bytes_per_sample;
-          unsigned long int byte_count = actual_count * bytes_per_sample;
-          
-          if (abs_start + byte_count > buffer_.size()) {
-               throw std::runtime_error("Buffer read out of bounds");
-          }
-          
-          if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte (uint64)
-              chunk.y_type = 13; // Keep original type ID, but data is promoted
-              chunk.y_bytes.resize(actual_count * 8);
-              uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
-              
-              for (unsigned long int i = 0; i < actual_count; ++i) {
-                  unsigned long int src_idx = abs_start + i * 6;
-                  uint64_t val = 0;
-                  // Assuming Little Endian storage in file
-                  for (int b = 0; b < 6; ++b) {
-                      val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
-                  }
-                  dest[i] = val;
-              }
-          } else {
-              chunk.y_type = type;
-              chunk.y_bytes.resize(byte_count);
-              std::copy(buffer_.begin() + abs_start, buffer_.begin() + abs_start + byte_count, chunk.y_bytes.begin());
-          }
-      } else {
-          // Scaled mode: convert to double
-          chunk.y_type = 8; // imc::numtype::ddouble
-          chunk.y_bytes.resize(actual_count * sizeof(double));
-          double* ptr = reinterpret_cast<double*>(chunk.y_bytes.data());
-          
-          for (unsigned long int i = 0; i < actual_count; ++i) {
-              ptr[i] = ch.ydata_[start + i].as_double();
-          }
-      }
-
-      // Handle X data
-      if (include_x) {
-          if (ch.dimension_ == 2 && raw_mode) {
-              // XY channel, raw mode
-              int type = (int)ch.xdatatp_;
-              unsigned long int bytes_per_sample = ch.xsignbits_ / 8;
-              
-              imc::block& cs_block = mapblocks_.at(ch.chnenv_.CSuuid_);
-              std::vector<imc::parameter> prms = cs_block.get_parameters();
-              unsigned long int buffstrt = prms[3].begin();
-              
-              unsigned long int abs_start = buffstrt + ch.xbuffer_offset_ + 1 + start * bytes_per_sample;
-              unsigned long int byte_count = actual_count * bytes_per_sample;
-              
-              if (abs_start + byte_count > buffer_.size()) {
-                   throw std::runtime_error("Buffer read out of bounds (X)");
-              }
-              
-              if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte
-                  chunk.x_type = 13; // Keep original type ID
-                  chunk.x_bytes.resize(actual_count * 8);
-                  uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
-                  for (unsigned long int i = 0; i < actual_count; ++i) {
-                      unsigned long int src_idx = abs_start + i * 6;
-                      uint64_t val = 0;
-                      for (int b = 0; b < 6; ++b) {
-                          val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
-                      }
-                      dest[i] = val;
-                  }
-              } else {
-                  chunk.x_type = type;
-                  chunk.x_bytes.resize(byte_count);
-                  std::copy(buffer_.begin() + abs_start, buffer_.begin() + abs_start + byte_count, chunk.x_bytes.begin());
-              }
-          } else {
-              // Generated X or scaled X
-              chunk.x_type = 8; // imc::numtype::ddouble
-              chunk.x_bytes.resize(actual_count * sizeof(double));
-              double* ptr = reinterpret_cast<double*>(chunk.x_bytes.data());
-              
-              for (unsigned long int i = 0; i < actual_count; ++i) {
-                  if (start + i < ch.xdata_.size())
-                      ptr[i] = ch.xdata_[start + i].as_double();
-                  else
-                      ptr[i] = 0.0;
-              }
-          }
-      }
-
-      return chunk;
+      return channels_.at(uuid).read_chunk(start, count, include_x, raw_mode);
     }
 
     // print single specific channel
