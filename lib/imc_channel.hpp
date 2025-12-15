@@ -12,6 +12,7 @@
 #include <chrono>
 #include <ctime>
 #include <time.h>
+#include <cstring>
 #if defined(__linux__) || defined(__APPLE__)
 #include <iconv.h>
 #elif defined(__WIN32__) || defined(_WIN32)
@@ -22,6 +23,16 @@
 
 namespace imc
 {
+  struct channel_chunk {
+    std::vector<unsigned char> x_bytes;
+    std::vector<unsigned char> y_bytes;
+    unsigned long int start;
+    unsigned long int count;
+    bool has_x;
+    int x_type;
+    int y_type;
+  };
+
   struct component_env
   {
     std::string uuid_;
@@ -275,7 +286,7 @@ namespace imc
     component_env compenv_;
 
     // Constructor to parse the associated blocks
-    component_group(component_env &compenv, std::map<std::string, imc::block>* blocks, std::vector<unsigned char>* buffer)
+    component_group(component_env &compenv, std::map<std::string, imc::block>* blocks, const unsigned char* buffer)
         : compenv_(compenv)
     {
         if (blocks->count(compenv.CCuuid_) == 1)
@@ -312,7 +323,7 @@ namespace imc
     // associated environment of blocks and map of blocks
     channel_env chnenv_;
     std::map<std::string,imc::block>* blocks_;
-    std::vector<unsigned char>* buffer_;
+    const unsigned char* buffer_;
 
     imc::origin_data NO_;
     imc::language NL_;
@@ -349,6 +360,8 @@ namespace imc
     // range, factor and offset
     double xfactor_, yfactor_;
     double xoffset_, yoffset_;
+    
+    unsigned long int number_of_samples_ = 0;
 
     // group reference the channel belongs to
     unsigned long int group_index_;
@@ -356,7 +369,7 @@ namespace imc
 
     // constructor takes channel's block environment
     channel(channel_env &chnenv, std::map<std::string,imc::block>* blocks,
-                                 std::vector<unsigned char>* buffer):
+                                 const unsigned char* buffer):
       chnenv_(chnenv), blocks_(blocks), buffer_(buffer),
       xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
       group_index_(-1)
@@ -476,15 +489,15 @@ namespace imc
       }
 
       // start converting binary buffer to imc::datatype
-      if ( !chnenv_.CSuuid_.empty() ) convert_buffer();
+      if ( !chnenv_.CSuuid_.empty() ) init_metadata();
 
       // convert any non-UTF-8 codepage to UTF-8 and cleanse any text
       convert_encoding();
       cleanse_text();
     }
 
-    // convert buffer to actual datatype
-    void convert_buffer()
+    // initialize metadata without loading data
+    void init_metadata()
     {
       std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
       if ( prms.size() < 4)
@@ -493,30 +506,55 @@ namespace imc
       }
 
       // extract (channel dependent) part of buffer
-      unsigned long int buffstrt = prms[3].begin();
-      std::vector<unsigned char> yCSbuffer( buffer_->begin()+buffstrt+ybuffer_offset_+1,
-                                           buffer_->begin()+buffstrt+ybuffer_offset_+ybuffer_size_+1 );
+      size_t yCSbuffer_size = ybuffer_size_;
 
       // determine number of values in buffer
-      unsigned long int ynum_values = (unsigned long int)(yCSbuffer.size()/(ysignbits_/8));
-      if ( ynum_values*(ysignbits_/8) != yCSbuffer.size() )
+      unsigned long int ynum_values = (unsigned long int)(yCSbuffer_size/(ysignbits_/8));
+      if ( ynum_values*(ysignbits_/8) != yCSbuffer_size )
       {
         throw std::runtime_error("CSbuffer and significant bits of y datatype don't match");
       }
-
+      
+      number_of_samples_ = ynum_values;
 
       if (dimension_ ==  1)
       {
-        // process y-data
-        process_data(ydata_, ynum_values, ydatatp_, yCSbuffer);
-
         // find appropriate precision for "xdata_" by means of "xstepwidth_"
         int prec_step = (xstepwidth_ > 0 ) ? (int)ceil(fabs(log10(xstepwidth_))) : 10;
         int prec_start = (fabs(xstart_) > 0 && fabs(xstart_) < 1.0) ? (int)ceil(fabs(log10(fabs(xstart_)))) : 0;
         // Use (std::max)(...) to avoid Windows macros (min/max) breaking std::max.
         xprec_ = (std::max)(prec_step, prec_start);
+      }
+      else if (dimension_ == 2)
+      {
+        // const unsigned char* xCSbuffer = buffer_ + buffstrt + xbuffer_offset_ + 1;
+        size_t xCSbuffer_size = xbuffer_size_;
+        unsigned long int xnum_values = (unsigned long int)(xCSbuffer_size/(xsignbits_/8));
+        
+        if ( xnum_values != ynum_values )
+        {
+          throw std::runtime_error("x and y data have different number of values");
+        }
+        xprec_ = 9;
+      }
+      else
+      {
+        throw std::runtime_error("unsupported dimension");
+      }
+    }
 
-        // fill xdata_
+    // convert buffer to actual datatype (loads all data)
+    void load_all_data()
+    {
+      std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
+      unsigned long int buffstrt = prms[3].begin();
+      const unsigned char* yCSbuffer = buffer_ + buffstrt + ybuffer_offset_ + 1;
+      size_t yCSbuffer_size = ybuffer_size_;
+      unsigned long int ynum_values = number_of_samples_;
+
+      if (dimension_ ==  1)
+      {
+        process_data(ydata_, ynum_values, ydatatp_, yCSbuffer, yCSbuffer_size);
         for ( unsigned long int i = 0; i < ynum_values; i++ )
         {
           xdata_.push_back(xstart_+(double)i*xstepwidth_);
@@ -524,37 +562,150 @@ namespace imc
       }
       else if (dimension_ == 2)
       {
-        // process x- and y-data
-        std::vector<unsigned char> xCSbuffer( buffer_->begin()+buffstrt+xbuffer_offset_+1,
-                                            buffer_->begin()+buffstrt+xbuffer_offset_+xbuffer_size_+1 );
-
-        // determine number of values in buffer
-        unsigned long int xnum_values = (unsigned long int)(xCSbuffer.size()/(xsignbits_/8));
-        if ( xnum_values*(xsignbits_/8) != xCSbuffer.size() )
-        {
-          throw std::runtime_error("CSbuffer and significant bits of x datatype don't match");
-        }
-        if ( xnum_values != ynum_values )
-        {
-          throw std::runtime_error("x and y data have different number of values");
-        }
-
-        xprec_ = 9;
-
-        process_data(xdata_, xnum_values, xdatatp_, xCSbuffer);
-        process_data(ydata_, ynum_values, ydatatp_, yCSbuffer);
-      }
-      else
-      {
-        throw std::runtime_error("unsupported dimension");
+        const unsigned char* xCSbuffer = buffer_ + buffstrt + xbuffer_offset_ + 1;
+        size_t xCSbuffer_size = xbuffer_size_;
+        process_data(xdata_, ynum_values, xdatatp_, xCSbuffer, xCSbuffer_size);
+        process_data(ydata_, ynum_values, ydatatp_, yCSbuffer, yCSbuffer_size);
       }
 
       transformData(xdata_, xfactor_, xoffset_);
       transformData(ydata_, yfactor_, yoffset_);
     }
 
+    channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
+    {
+        unsigned long int total_len = number_of_samples_;
+
+        if ( start >= total_len )
+        {
+            return { {}, {}, start, 0, include_x, 0, 0 };
+        }
+
+        unsigned long int end = start + count;
+        if ( end > total_len ) end = total_len;
+        unsigned long int actual_count = end - start;
+
+        channel_chunk chunk;
+        chunk.start = start;
+        chunk.count = actual_count;
+        chunk.has_x = include_x;
+        chunk.x_type = 0;
+        chunk.y_type = 0;
+        
+        std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
+        unsigned long int buffstrt = prms[3].begin();
+
+        // Handle Y data
+        if (raw_mode) {
+            int type = (int)ydatatp_;
+            unsigned long int bytes_per_sample = ysignbits_ / 8;
+            unsigned long int abs_start = buffstrt + ybuffer_offset_ + 1 + start * bytes_per_sample;
+            unsigned long int byte_count = actual_count * bytes_per_sample;
+            
+            if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte (uint64)
+                chunk.y_type = 13;
+                chunk.y_bytes.resize(actual_count * 8);
+                uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
+                for (unsigned long int i = 0; i < actual_count; ++i) {
+                    unsigned long int src_idx = abs_start + i * 6;
+                    uint64_t val = 0;
+                    for (int b = 0; b < 6; ++b) val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                    dest[i] = val;
+                }
+            } else {
+                chunk.y_type = type;
+                chunk.y_bytes.resize(byte_count);
+                std::copy(buffer_ + abs_start, buffer_ + abs_start + byte_count, chunk.y_bytes.begin());
+            }
+        } else {
+            // Scaled mode: convert to double
+            chunk.y_type = 8; // imc::numtype::ddouble
+            chunk.y_bytes.resize(actual_count * sizeof(double));
+            std::vector<double> temp_data;
+            
+            unsigned long int abs_start = buffstrt + ybuffer_offset_ + 1; // Base start
+            
+            switch (ydatatp_) {
+                case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                default: throw std::runtime_error("Unsupported type for scaled chunk reading (Y): " + std::to_string(ydatatp_));
+            }
+            
+            memcpy(chunk.y_bytes.data(), temp_data.data(), temp_data.size() * sizeof(double));
+        }
+
+        // Handle X data
+        if (include_x) {
+            if (dimension_ == 2 && raw_mode) {
+                int type = (int)xdatatp_;
+                unsigned long int bytes_per_sample = xsignbits_ / 8;
+                unsigned long int abs_start = buffstrt + xbuffer_offset_ + 1 + start * bytes_per_sample;
+                unsigned long int byte_count = actual_count * bytes_per_sample;
+                
+                if (type == 13) {
+                    chunk.x_type = 13;
+                    chunk.x_bytes.resize(actual_count * 8);
+                    uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
+                    for (unsigned long int i = 0; i < actual_count; ++i) {
+                        unsigned long int src_idx = abs_start + i * 6;
+                        uint64_t val = 0;
+                        for (int b = 0; b < 6; ++b) val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                        dest[i] = val;
+                    }
+                } else {
+                    chunk.x_type = type;
+                    chunk.x_bytes.resize(byte_count);
+                    std::copy(buffer_ + abs_start, buffer_ + abs_start + byte_count, chunk.x_bytes.begin());
+                }
+            } else {
+                // Generated X or scaled X
+                chunk.x_type = 8; // imc::numtype::ddouble
+                chunk.x_bytes.resize(actual_count * sizeof(double));
+                double* ptr = reinterpret_cast<double*>(chunk.x_bytes.data());
+                
+                if (dimension_ == 2) {
+                     // Read X from file and scale
+                     std::vector<double> temp_data;
+                     unsigned long int abs_start = buffstrt + xbuffer_offset_ + 1;
+                     switch (xdatatp_) {
+                        case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        default: throw std::runtime_error("Unsupported type for scaled chunk reading (X): " + std::to_string(xdatatp_));
+                    }
+                    memcpy(ptr, temp_data.data(), temp_data.size() * sizeof(double));
+                } else {
+                    // Generated X
+                    for (unsigned long int i = 0; i < actual_count; ++i) {
+                        ptr[i] = xstart_ + (double)(start + i) * xstepwidth_;
+                    }
+                }
+            }
+        }
+        return chunk;
+    }
+
     // handle data type conversion
-    void process_data(std::vector<imc::datatype>& data_, size_t num_values, numtype datatp_, std::vector<unsigned char>& CSbuffer)
+    void process_data(std::vector<imc::datatype>& data_, size_t num_values, numtype datatp_, const unsigned char* CSbuffer, size_t CSbuffer_size)
     {
       // adjust size of data
       data_.resize(num_values);
@@ -563,34 +714,34 @@ namespace imc
       switch (datatp_)
       {
           case numtype::unsigned_byte:
-              imc::convert_data_to_type<imc_Ubyte>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Ubyte>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::signed_byte:
-              imc::convert_data_to_type<imc_Sbyte>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Sbyte>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::unsigned_short:
-              imc::convert_data_to_type<imc_Ushort>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Ushort>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::signed_short:
-              imc::convert_data_to_type<imc_Sshort>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Sshort>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::unsigned_long:
-              imc::convert_data_to_type<imc_Ulongint>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Ulongint>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::signed_long:
-              imc::convert_data_to_type<imc_Slongint>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_Slongint>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::ffloat:
-              imc::convert_data_to_type<imc_float>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_float>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::ddouble:
-              imc::convert_data_to_type<imc_double>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_double>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::two_byte_word_digital:
-              imc::convert_data_to_type<imc_digital>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_digital>(CSbuffer, CSbuffer_size, data_);
               break;
           case numtype::six_byte_unsigned_long:
-              imc::convert_data_to_type<imc_sixbyte>(CSbuffer, data_);
+              imc::convert_data_to_type<imc_sixbyte>(CSbuffer, CSbuffer_size, data_);
               break;
           default:
               throw std::runtime_error(std::string("unsupported/unknown datatype ") + std::to_string(datatp_));
@@ -703,6 +854,9 @@ namespace imc
     // provide JSON string of metadata
     std::string get_json(bool include_data = false)
     {
+      if (include_data && ydata_.empty() && number_of_samples_ > 0) {
+          load_all_data();
+      }
       // prepare printable trigger-time
       std::time_t tt = std::chrono::system_clock::to_time_t(trigger_time_);
       std::time_t att = std::chrono::system_clock::to_time_t(absolute_trigger_time_);

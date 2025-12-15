@@ -12,12 +12,12 @@
 namespace imc
 {
   // obtain specific parameters as string
-  std::string get_parameter(const std::vector<unsigned char>* buffer, const imc::parameter* param)
+  std::string get_parameter(const unsigned char* buffer, const imc::parameter* param)
   {
     std::string prm("");
     for ( unsigned long int i = param->begin()+1; i <= param->end(); i++ )
     {
-      prm.push_back((char)(*buffer)[i]);
+      prm.push_back((char)buffer[i]);
     }
     return prm;
   }
@@ -29,7 +29,7 @@ namespace imc
     int processor_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 3 ) throw std::runtime_error("invalid number of parameters in CF");
       fileformat_ = std::stoi(get_parameter(buffer,&parameters[0]));
@@ -56,7 +56,7 @@ namespace imc
     bool closed_;  // corresponds to true = 1 and false = 0 in file
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 2 ) throw std::runtime_error("invalid number of parameters in CK");
       version_ = std::stoi(get_parameter(buffer,&parameters[0]));
@@ -83,7 +83,7 @@ namespace imc
     std::string comment_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 7 ) throw std::runtime_error("invalid number of parameters in CB");
       group_index_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -111,7 +111,7 @@ namespace imc
     std::string comment_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 9 ) throw std::runtime_error("invalid number of parameters in CT");
       group_index_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -149,7 +149,7 @@ namespace imc
     int dimension_; // corresponding to fieldtype \in {1,}
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 5 ) throw std::runtime_error("invalid number of parameters in CG");
       number_components_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -176,7 +176,7 @@ namespace imc
     std::string unit_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 6 ) throw std::runtime_error("invalid number of parameters in CD1");
       dx_ = std::stod(get_parameter(buffer,&parameters[2]));
@@ -208,7 +208,7 @@ namespace imc
     int pretriggerapp_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 11 ) throw std::runtime_error("invalid number of parameters in CD2");
       dx_ = std::stod(get_parameter(buffer,&parameters[2]));
@@ -244,7 +244,7 @@ namespace imc
     bool analog_digital_; // 1 => false (analog), 2 => true (digital)
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 4 ) throw std::runtime_error("invalid number of parameters in CC");
       component_index_ = std::stoi(get_parameter(buffer,&parameters[2]));
@@ -291,7 +291,7 @@ namespace imc
     unsigned long int distance_bytes_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 10 ) throw std::runtime_error("invalid number of parameters in CP");
       buffer_reference_ = std::stoi(get_parameter(buffer,&parameters[2]));
@@ -337,7 +337,7 @@ namespace imc
     // bool new_event_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 13 ) throw std::runtime_error("invalid number of parameters in Cb");
       number_buffers_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -379,7 +379,7 @@ namespace imc
     std::string unit_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 8 ) throw std::runtime_error("invalid number of parameters in CR");
       transform_ = (get_parameter(buffer,&parameters[2]) == std::string("1"));
@@ -411,7 +411,7 @@ namespace imc
     std::string comment_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 9 ) throw std::runtime_error("invalid number of parameters in CN");
       group_index_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -440,7 +440,7 @@ namespace imc
     // unsigned long int begin_buffer_, end_buffer_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 4 ) throw std::runtime_error("invalid number of parameters in CS");
       index_ = std::stoul(get_parameter(buffer,&parameters[2]));
@@ -464,7 +464,7 @@ namespace imc
     std::string language_code_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if (parameters.size() < 4) throw std::runtime_error("invalid number of parameters in NL");
       codepage_ = get_parameter(buffer, &parameters[2]);
@@ -480,7 +480,7 @@ namespace imc
     std::string comment_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 7 ) throw std::runtime_error("invalid number of parameters in NO");
       origin_ = ( get_parameter(buffer,&parameters[2]) == std::string("1") );
@@ -506,7 +506,7 @@ namespace imc
     double trigger_time_frac_secs_;
 
     // construct members by parsing particular parameters from buffer
-    void parse(const std::vector<unsigned char>* buffer, const std::vector<parameter>& parameters)
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
       if ( parameters.size() < 8 ) throw std::runtime_error("invalid number of parameters in NT1");
       tms_ = std::tm();
@@ -560,7 +560,7 @@ namespace imc {
 
     rawobject(): objidx_(-1) { }
 
-    void parse(imc::key key, const std::vector<unsigned char>* buffer,
+    void parse(imc::key key, const unsigned char* buffer,
                              const std::vector<parameter>& parameters)
     {
       if ( key.name_ == std::string("CF") )
