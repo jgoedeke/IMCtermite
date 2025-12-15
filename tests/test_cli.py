@@ -5,10 +5,13 @@ End-to-end tests for IMCtermite CLI tool
 
 import pytest
 import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CLI = PROJECT_ROOT / "imctermite"
+if sys.platform == "win32":
+    CLI = CLI.with_suffix(".exe")
 SAMPLES_DIR = PROJECT_ROOT / "samples" / "datasetA"
 
 
