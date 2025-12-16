@@ -431,7 +431,7 @@ namespace imc
     }
 
     // print single specific channel
-    void print_channel(std::string channeluuid, std::string outputfile, const char sep)
+    void print_channel(std::string channeluuid, std::string outputfile, const char sep, unsigned long int chunk_size = 100000)
     {
       // check for given parent directory of output file
       std::filesystem::path pdf = outputfile;
@@ -444,7 +444,7 @@ namespace imc
       // find channel with given name
       if ( channels_.count(channeluuid) == 1 )
       {
-        channels_.at(channeluuid).print(outputfile,sep);
+        channels_.at(channeluuid).print(outputfile,sep,25,9,chunk_size);
       }
       else
       {
@@ -454,7 +454,7 @@ namespace imc
     }
 
     // print all channels into given directory
-    void print_channels(std::string output, const char sep)
+    void print_channels(std::string output, const char sep, unsigned long int chunk_size = 100000)
     {
       // check for given directory
       std::filesystem::path pd = output;
@@ -473,8 +473,8 @@ namespace imc
                                            : it->second.name_ + std::string(".csv");
         std::filesystem::path pf = pd / filenam;
 
-        // and print the channel
-        it->second.print(pf.u8string(),sep);
+        // and print the channel using streaming
+        it->second.print(pf.u8string(),sep,25,9,chunk_size);
       }
     }
 

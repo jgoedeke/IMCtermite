@@ -112,10 +112,10 @@ cdef class imctermite:
             break
 
   # print single channel/all channels
-  def print_channel(self, string channeluuid, string outputfile, char delimiter):
-    self.cppimc.print_channel(channeluuid,outputfile,delimiter)
-  def print_channels(self, string outputdir, char delimiter):
-    self.cppimc.print_channels(outputdir,delimiter)
+  def print_channel(self, string channeluuid, string outputfile, char delimiter, unsigned long int chunk_size=100000):
+    self.cppimc.print_channel(channeluuid,outputfile,delimiter,chunk_size)
+  def print_channels(self, string outputdir, char delimiter, unsigned long int chunk_size=100000):
+    self.cppimc.print_channels(outputdir,delimiter,chunk_size)
 
   # print table including channels
   def print_table(self, string outputfile):
