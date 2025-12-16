@@ -58,9 +58,9 @@ cdef class imctermite:
     chnlstjn = [jn.loads(chn.decode(get_codepage(chn),errors="ignore")) for chn in chnlst]
     return chnlstjn
 
-  def iter_channel_numpy(self, string channeluuid, bool include_x=True, int chunk_rows=1000000, str mode="scaled"):
+  def iter_channel_numpy(self, channeluuid, bool include_x=True, unsigned long int chunk_rows=1000000, str mode="scaled", unsigned long int start_index=0):
     cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
-    cdef unsigned long int start = 0
+    cdef unsigned long int start = start_index
     cdef channel_chunk chunk
     cdef cnp.ndarray x_arr
     cdef cnp.ndarray y_arr
@@ -118,6 +118,16 @@ cdef class imctermite:
         start += chunk.count
         if chunk.count == 0:
             break
+
+  def get_channel_data(self, channeluuid, bool include_x=True, str mode="scaled"):
+    cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
+    if total_len == 0:
+        res = {'y': np.array([])}
+        if include_x:
+            res['x'] = np.array([])
+        return res
+    
+    return next(self.iter_channel_numpy(channeluuid, include_x, total_len, mode, 0))
 
   # print single channel/all channels
   def print_channel(self, channeluuid, outputfile, char delimiter, unsigned long int chunk_size=100000):
