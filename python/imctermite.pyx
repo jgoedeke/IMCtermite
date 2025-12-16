@@ -58,6 +58,10 @@ cdef class imctermite:
     chnlstjn = [jn.loads(chn.decode(get_codepage(chn),errors="ignore")) for chn in chnlst]
     return chnlstjn
 
+  # get length of a channel
+  def get_channel_length(self, channeluuid):
+    return self.cppimc.get_channel_length(_as_bytes(channeluuid))
+
   def iter_channel_numpy(self, channeluuid, bool include_x=True, unsigned long int chunk_rows=1000000, str mode="scaled", unsigned long int start_index=0):
     cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
     cdef unsigned long int start = start_index
