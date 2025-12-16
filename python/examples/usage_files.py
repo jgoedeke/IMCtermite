@@ -1,5 +1,5 @@
 
-import imctermite import imctermite
+import imctermite
 
 def show_results(imcraw) :
 
@@ -19,11 +19,11 @@ def show_results(imcraw) :
     print("")
 
 # create instance of 'imctermite'
-imcraw = imctermite(b'samples/sampleA.raw')
+imcraw = imctermite.imctermite("samples/sampleA.raw")
 
 show_results(imcraw)
 
 # use previous instance of 'imctermite' to provide new file
-imcraw.submit_file(b'samples/sampleB.raw')
+imcraw.submit_file("samples/sampleB.raw")
 
 show_results(imcraw)
