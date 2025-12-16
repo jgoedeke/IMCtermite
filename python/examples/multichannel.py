@@ -2,6 +2,7 @@
 import imctermite
 import pandas
 import datetime
+import numpy as np
 
 def add_trigger_time(trigger_time, add_time) :
     trgts = datetime.datetime.strptime(trigger_time,'%Y-%m-%dT%H:%M:%S')
@@ -10,32 +11,48 @@ def add_trigger_time(trigger_time, add_time) :
 
 if __name__ == "__main__" :
 
-    # read file and extract data
+    # read file
     imctm = imctermite.imctermite("samples/exampleB.raw")
-    chns = imctm.get_channels(True)
     
-    # prepare abscissa
-    xcol = "time ["+chns[0]['xunit']+"]"
-    #xcol = "timestamp"
-    xsts = [add_trigger_time(chns[0]['trigger-time'],tm) for tm in chns[0]['xdata']]
-
-    # sort channels
-    chnnms = sorted([chn['name'] for chn in chns], reverse=False)
-    chnsdict = {}
-    for chn in chns :
-        chnsdict[chn['name']] = chn
-
-    # construct dataframe
+    # Get metadata only
+    chns = imctm.get_channels(False)
+    
+    if not chns:
+        print("No channels found")
+        exit()
+    
+    # Prepare DataFrame
     df = pandas.DataFrame()
-    df[xcol] = pandas.Series(chns[0]['xdata'])
-    #df[xcol] = pandas.Series(xsts)
-    #for idx,chn in enumerate(chns) :
+
+    # Get X-axis from the first channel
+    first_chn = chns[0]
+    
+    data = imctm.get_channel_data(first_chn['uuid'], include_x=True)
+    x_data = data['x']
+    
+    xcol = "time ["+first_chn['xunit']+"]"
+    df[xcol] = x_data
+
+    # sort channels by name
+    chnnms = sorted([chn['name'] for chn in chns], reverse=False)
+    chnsdict = {chn['name']: chn for chn in chns}
+
     for chnnm in chnnms :
         chn = chnsdict[chnnm]
-        #xcol = (chn['xname'] if chn['xname'] != '' else "x_"+str(idx))+" ["+chn['xunit']+"]"
-        #df[xcol] = pandas.Series(chn['xdata'])
+        uuid = chn['uuid']
+        
+        # Fetch Y data only
+        data = imctm.get_channel_data(uuid, include_x=False)
+        y_data = data['y']
+        
         ycol = chn['yname']+" ["+chn['yunit']+"]"
-        df[ycol] = pandas.Series(chn['ydata'])
+        
+        # Assign to DataFrame
+        if len(y_data) == len(df):
+            df[ycol] = y_data
+        else:
+            # Fallback to Series for alignment/filling
+            df[ycol] = pandas.Series(y_data)
 
     # show entire dataframe and write file
     print(df)
