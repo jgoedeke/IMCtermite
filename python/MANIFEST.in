@@ -2,4 +2,6 @@ include lib/*.hpp
 include *.cpp
 include *.pyx
 include *.pxd
+include *.pyi
+include py.typed
 include VERSION
