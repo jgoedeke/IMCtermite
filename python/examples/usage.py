@@ -5,7 +5,7 @@ import os
 
 # declare and initialize instance of "imctermite" by passing a raw-file
 try :
-    imcraw = imctermite.imctermite(b"samples/exampleB.raw")
+    imcraw = imctermite.imctermite("samples/exampleB.raw")
 except RuntimeError as e :
     raise Exception("failed to load/parse raw-file: " + str(e))
 
@@ -24,15 +24,15 @@ print(len(chnxdata))
 print()
 
 # print the channels into a specific directory
-imcraw.print_channels(b"/tmp/",ord(','))
+imcraw.print_channels("/tmp/",ord(','))
 
 # print all channels separately
 for i,chn in enumerate(channels) :
     print(str(i)+" : "+chn['name']+" : "+chn['uuid'])
     filname = os.path.join("/tmp/",str(i) + "_" + chn['name']+".csv")
     print(filname)
-    imcraw.print_channel(chn['uuid'].encode(),filname.encode(),ord(','))
+    imcraw.print_channel(chn['uuid'],filname,ord(','))
 
 # print all channels in single file
-imcraw.print_table(b"/tmp/allchannels.csv")
+imcraw.print_table("/tmp/allchannels.csv")
 

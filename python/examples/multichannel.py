@@ -11,7 +11,7 @@ def add_trigger_time(trigger_time, add_time) :
 if __name__ == "__main__" :
 
     # read file and extract data
-    imctm = imctermite.imctermite(b"Measurement.raw")
+    imctm = imctermite.imctermite("samples/exampleB.raw")
     chns = imctm.get_channels(True)
     
     # prepare abscissa
@@ -39,5 +39,5 @@ if __name__ == "__main__" :
 
     # show entire dataframe and write file
     print(df)
-    df.to_csv("Measurement.csv",header=True,sep='\t',index=False)
+    df.to_csv("exampleB.csv",header=True,sep='\t',index=False)
 

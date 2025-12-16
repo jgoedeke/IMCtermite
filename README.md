@@ -196,17 +196,17 @@ of it by passing a _raw_ file to the constructor:
 ```Python
 import imctermite
 
-imcraw = imctermite.imctermite(b"sample/sampleA.raw")
+imcraw = imctermite.imctermite("sample/sampleA.raw")
 ```
 
 An example of how to create an instance and obtain the list of channels is:
 
 ```Python
-import IMCtermite
+import imctermite
 
 # declare and initialize instance of "imctermite" by passing a raw-file
 try :
-    imcraw = IMCtermite.imctermite(b"samples/sampleA.raw")
+    imcraw = imctermite.imctermite("samples/sampleA.raw")
 except RuntimeError as e :
     print("failed to load/parse raw-file: " + str(e))
 

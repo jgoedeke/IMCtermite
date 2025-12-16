@@ -27,22 +27,30 @@ def get_codepage(chn) :
     else :
         return 'utf-8'
 
+cdef bytes _as_bytes(obj):
+    if isinstance(obj, bytes):
+        return obj
+    elif isinstance(obj, str):
+        return obj.encode('utf-8')
+    else:
+        return str(obj).encode('utf-8')
+
 cdef class imctermite:
 
   # C++ instance of class
   cdef cppimctermite* cppimc
 
   # constructor
-  def __cinit__(self, string rawfile):
-    self.cppimc = new cppimctermite(rawfile)
+  def __cinit__(self, rawfile):
+    self.cppimc = new cppimctermite(_as_bytes(rawfile))
 
   def __dealloc__(self):
     if self.cppimc != NULL:
         del self.cppimc
 
   # provide raw file
-  def submit_file(self,string rawfile):
-    self.cppimc.set_file(rawfile)
+  def submit_file(self, rawfile):
+    self.cppimc.set_file(_as_bytes(rawfile))
 
   # get JSON list of channels
   def get_channels(self, bool include_data):
@@ -51,7 +59,7 @@ cdef class imctermite:
     return chnlstjn
 
   def iter_channel_numpy(self, string channeluuid, bool include_x=True, int chunk_rows=1000000, str mode="scaled"):
-    cdef unsigned long int total_len = self.cppimc.get_channel_length(channeluuid)
+    cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
     cdef unsigned long int start = 0
     cdef channel_chunk chunk
     cdef cnp.ndarray x_arr
@@ -77,7 +85,7 @@ cdef class imctermite:
     }
 
     while start < total_len:
-        chunk = self.cppimc.read_channel_chunk(channeluuid, start, chunk_rows, include_x, raw_mode)
+        chunk = self.cppimc.read_channel_chunk(_as_bytes(channeluuid), start, chunk_rows, include_x, raw_mode)
         
         # Create numpy arrays from bytes
         y_dtype = dtype_map.get(chunk.y_type, np.float64)
@@ -112,16 +120,16 @@ cdef class imctermite:
             break
 
   # print single channel/all channels
-  def print_channel(self, string channeluuid, string outputfile, char delimiter, unsigned long int chunk_size=100000):
-    self.cppimc.print_channel(channeluuid,outputfile,delimiter,chunk_size)
-  def print_channels(self, string outputdir, char delimiter, unsigned long int chunk_size=100000):
-    self.cppimc.print_channels(outputdir,delimiter,chunk_size)
+  def print_channel(self, channeluuid, outputfile, char delimiter, unsigned long int chunk_size=100000):
+    self.cppimc.print_channel(_as_bytes(channeluuid),_as_bytes(outputfile),delimiter,chunk_size)
+  def print_channels(self, outputdir, char delimiter, unsigned long int chunk_size=100000):
+    self.cppimc.print_channels(_as_bytes(outputdir),delimiter,chunk_size)
 
   # print table including channels
-  def print_table(self, string outputfile):
+  def print_table(self, outputfile):
     chnlst = self.cppimc.get_channels(True,True)
     chnlstjn = [jn.loads(chn.decode(errors="ignore")) for chn in chnlst]
-    with open(outputfile.decode(),'w') as fout:
+    with open(outputfile,'w') as fout:
       for chn in chnlstjn:
         fout.write('#' +str(chn['xname']).rjust(19)+str(chn['yname']).rjust(20)+'\n')
         fout.write('#'+str(chn['xunit']).rjust(19)+str(chn['yunit']).rjust(20)+'\n')

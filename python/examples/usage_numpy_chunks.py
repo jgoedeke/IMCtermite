@@ -6,7 +6,7 @@ import numpy as np
 
 # Path to a sample file
 # Using sampleB.raw because it has integer data with scaling (factor=0.01, offset=327.68)
-raw_file = b"samples/sampleB.raw"
+raw_file = "samples/sampleB.raw"
 if not os.path.exists(raw_file):
     print(f"Sample file {raw_file} not found.")
     exit(1)
@@ -30,7 +30,7 @@ if not channels:
 target_uuid = "347"
 channel_info = next((ch for ch in channels if ch['uuid'] == target_uuid), channels[0])
 
-first_channel_uuid = channel_info['uuid'].encode('utf-8')
+first_channel_uuid = channel_info['uuid']
 print(f"Iterating over channel {first_channel_uuid} ({channel_info.get('name', 'unnamed')})")
 
 # Check native datatype
