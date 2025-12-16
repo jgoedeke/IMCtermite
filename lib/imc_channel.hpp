@@ -917,7 +917,7 @@ namespace imc
     }
 
     // print channel
-    void print(std::string filename, const char sep = ',', int width = 25, int yprec = 9)
+    void print(std::string filename, const char sep = ',', int width = 25, int yprec = 9, unsigned long int chunk_size = 100000)
     {
       std::ofstream fou(filename);
 
@@ -934,21 +934,37 @@ namespace imc
         fou<<xname_<<sep<<yname_<<"\n"<<xunit_<<sep<<yunit_<<"\n";
       }
 
-      for ( unsigned long int i = 0; i < xdata_.size(); i++ )
+      // Stream data in chunks
+      unsigned long int start = 0;
+      while (start < number_of_samples_)
       {
-        if ( sep == ' ' )
+        channel_chunk chunk = read_chunk(start, chunk_size, true, false); // include_x=true, raw_mode=false (scaled)
+        
+        if (chunk.count == 0) break;
+        
+        // Extract x and y data from chunk
+        const double* x_ptr = reinterpret_cast<const double*>(chunk.x_bytes.data());
+        const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
+        
+        // Write chunk data
+        for (unsigned long int i = 0; i < chunk.count; i++)
         {
-          fou<<std::setprecision(xprec_)<<std::fixed
-             <<std::setw(width)<<std::left<<xdata_[i]
-             <<std::setprecision(yprec)<<std::fixed
-             <<std::setw(width)<<std::left<<ydata_[i]<<"\n";
+          if ( sep == ' ' )
+          {
+            fou<<std::setprecision(xprec_)<<std::fixed
+               <<std::setw(width)<<std::left<<x_ptr[i]
+               <<std::setprecision(yprec)<<std::fixed
+               <<std::setw(width)<<std::left<<y_ptr[i]<<"\n";
+          }
+          else
+          {
+            fou<<std::setprecision(xprec_)<<std::fixed<<x_ptr[i]
+               <<sep
+               <<std::setprecision(yprec)<<std::fixed<<y_ptr[i]<<"\n";
+          }
         }
-        else
-        {
-          fou<<std::setprecision(xprec_)<<std::fixed<<xdata_[i]
-             <<sep
-             <<std::setprecision(yprec)<<std::fixed<<ydata_[i]<<"\n";
-        }
+        
+        start += chunk.count;
       }
 
       fou.close();

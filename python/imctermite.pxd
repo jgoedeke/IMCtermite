@@ -37,6 +37,6 @@ cdef extern from "lib/imc_raw.hpp" namespace "imc":
     channel_chunk read_channel_chunk(string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode) except +
 
     # print single channel/all channels
-    void print_channel(string channeluuid, string outputdir, char delimiter) except +
-    void print_channels(string outputdir, char delimiter) except +
+    void print_channel(string channeluuid, string outputdir, char delimiter, unsigned long int chunk_size) except +
+    void print_channels(string outputdir, char delimiter, unsigned long int chunk_size) except +
     void print_table(string outputfile) except +
