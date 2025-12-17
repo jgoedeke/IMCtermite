@@ -20,9 +20,6 @@ extension = Extension(
 )
 
 setup(
-    ext_modules=cythonize(extension,language_level=3),
-    package_data={
-        "": ["py.typed", "*.pyi"]
-    },
+    ext_modules=cythonize(extension, language_level=3),
     zip_safe=False
 )

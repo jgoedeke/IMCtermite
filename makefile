@@ -87,7 +87,7 @@ docker-run:
 # python
 
 python-build: check-tags
-	make -C python/ build-inplace
+	make -C python/ build
 	cp python/imctermite*.so ./ -v 2>/dev/null || cp python/imctermite*.pyd ./ -v 2>/dev/null || true
 
 python-clean:
@@ -95,7 +95,7 @@ python-clean:
 	rm -vf imctermite*.so imctermite*.pyd
 
 python-test:
-	PYTHONPATH=./ python python/examples/usage.py
+	PYTHONPATH=./ python3 python/examples/usage.py
 
 #-----------------------------------------------------------------------------#
 # tests

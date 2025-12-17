@@ -11,25 +11,20 @@ setup-clean:
 	rm -rf lib/
 
 build: setup
-	python setup.py build
-
-build-inplace: setup
-	python setup.py build_ext --inplace
+	python3 -m pip install -e .
 
 build-sdist: setup
-	python setup.py sdist
-	python -m twine check dist/*
+	python3 -m build --sdist
+	python3 -m twine check dist/*
 
 build-bdist: setup
-	python setup.py bdist
-	python -m twine check dist/*
+	python3 -m build --wheel
+	python3 -m twine check dist/*
 
 build-clean:
-	python setup.py clean --all
 	rm -vf imctermite*.so imctermite*.pyd imctermite*.cpp
-	rm -vf IMCtermite*.so IMCtermite*.pyd IMCtermite*.cpp
-	rm -rvf dist/ IMCtermite.egg-info/
 	rm -rvf dist/ imctermite.egg-info/
+	rm -rvf build/
 
 cibuildwheel-build: setup
 	cibuildwheel --platform linux
@@ -38,9 +33,9 @@ cibuildwheel-clean:
 	rm -rvf wheelhouse/
 
 pypi-upload:
-	python -m twine upload dist/$(shell ls -t dist/ | head -n1)
+	python3 -m twine upload dist/$(shell ls -t dist/ | head -n1)
 
 clean: setup build-clean cibuildwheel-clean setup-clean
 
 run-example:
-	PYTHONPATH=$(pwd) python examples/usage_files.py
+	PYTHONPATH=$(pwd) python3 examples/usage_files.py

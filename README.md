@@ -4,6 +4,7 @@
 ![Tests](https://github.com/RecordEvolution/IMCtermite/actions/workflows/test.yml/badge.svg)
 ![CI Build Wheel](https://github.com/RecordEvolution/IMCtermite/actions/workflows/pypi-deploy.yml/badge.svg?branch=&event=push)
 [![PYPI](https://img.shields.io/pypi/v/IMCtermite.svg)](https://pypi.org/project/imctermite/)
+[![Python Version](https://img.shields.io/pypi/pyversions/imctermite)](https://pypi.org/project/imctermite/)
 
 # IMCtermite
 
@@ -151,10 +152,13 @@ python3 -m pip install imctermite
 ```
 
 which provides binary wheels for multiple architectures on _Windows_ and _Linux_
-and most _Python 3.x_ distributions. However, if your platform/architecture is
-not supported you can still compile the source distribution yourself, which
-requires _python3_setuptools_ and an up-to-date compiler supporting C++11
-standard (e.g. _gcc version >= 10.2.0_).
+and most _Python 3.x_ distributions. **Note:** Starting from version 3.0.0, 
+imctermite requires numpy as a dependency, which will be automatically 
+installed if not already present.
+
+However, if your platform/architecture is not supported you can still compile 
+the source distribution yourself, which requires _python3_setuptools_, _numpy_, 
+and an up-to-date compiler supporting C++11 standard (e.g. _gcc version >= 10.2.0_).
 
 ## Usage
 
