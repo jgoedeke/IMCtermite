@@ -5,6 +5,7 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_call:
 
 jobs:
   test:
@@ -23,13 +24,11 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install test dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest numpy cython setuptools wheel
+        pip install pytest
 
-    # Cross-platform build and test using Makefile
-    # Requires bash shell on Windows (Git Bash)
     - name: Build and Test
       shell: bash
       run: |

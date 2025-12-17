@@ -25,6 +25,25 @@ pytest tests/test_python.py
 
 ## Prerequisites
 
+### Recommended: Development install
+
+Install the package in editable mode with test dependencies (handles all requirements automatically):
+
 ```bash
-pip install cython pytest setuptools
+pip install -e "python[test]"
 ```
+
+Then run tests with pytest:
+```bash
+pytest
+```
+
+### Alternative: Using makefile
+
+If you prefer `make test`, just install pytest first:
+
+```bash
+pip install pytest
+make test
+```
+
