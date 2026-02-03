@@ -513,7 +513,8 @@ namespace imc
         // find appropriate precision for "xdata_" by means of "xstepwidth_"
         int prec_step = (xstepwidth_ > 0 ) ? (int)ceil(fabs(log10(xstepwidth_))) : 10;
         int prec_start = (fabs(xstart_) > 0 && fabs(xstart_) < 1.0) ? (int)ceil(fabs(log10(fabs(xstart_)))) : 0;
-        xprec_ = std::max(prec_step, prec_start);
+        // Use (std::max)(...) to avoid Windows macros (min/max) breaking std::max.
+        xprec_ = (std::max)(prec_step, prec_start);
 
         // fill xdata_
         for ( unsigned long int i = 0; i < ynum_values; i++ )
