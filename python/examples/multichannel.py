@@ -2,7 +2,6 @@
 import imctermite
 import pandas
 import datetime
-import numpy as np
 
 def add_trigger_time(trigger_time, add_time) :
     trgts = datetime.datetime.strptime(trigger_time,'%Y-%m-%dT%H:%M:%S')
@@ -12,7 +11,7 @@ def add_trigger_time(trigger_time, add_time) :
 if __name__ == "__main__" :
 
     # read file
-    imctm = imctermite.imctermite("samples/exampleB.raw")
+    imctm = imctermite.ImcTermite("samples/exampleB.raw")
     
     # Get metadata only
     chns = imctm.get_channels(False)

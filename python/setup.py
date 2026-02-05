@@ -12,9 +12,9 @@ cmpArgs = {
 }
 
 extension = Extension(
-    "imctermite",
-    sources=["imctermite.pyx"],
-    include_dirs=[numpy.get_include()],
+    "imctermite._imctermite",
+    sources=["imctermite/_imctermite.pyx"],
+    include_dirs=["lib", numpy.get_include()],
     extra_compile_args=cmpArgs[sys.platform],
     define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
 )

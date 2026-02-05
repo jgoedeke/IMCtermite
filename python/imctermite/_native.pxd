@@ -4,7 +4,7 @@ from libcpp.string cimport string
 from libcpp.vector cimport vector
 from libcpp cimport bool
 
-cdef extern from "lib/imc_raw.hpp" namespace "imc":
+cdef extern from "imc_raw.hpp" namespace "imc":
 
   cdef struct channel_chunk:
     vector[unsigned char] x_bytes

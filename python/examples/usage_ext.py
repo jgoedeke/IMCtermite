@@ -6,7 +6,7 @@ import datetime
 
 # declare and initialize instance of "imctermite" by passing a raw-file
 try :
-    imcraw = imctermite.imctermite("samples/sampleB.raw")
+    imcraw = imctermite.ImcTermite("samples/sampleB.raw")
 except RuntimeError as e :
     raise Exception("failed to load/parse raw-file: " + str(e))
 

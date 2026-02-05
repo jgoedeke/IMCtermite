@@ -10,7 +10,7 @@ def print_timerange(filename):
     """
     
     try:
-        imc = imctermite.imctermite(filename)
+        imc = imctermite.ImcTermite(filename)
     except RuntimeError as e:
         print(f"Error loading file: {e}")
         return
