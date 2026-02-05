@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 
 try:
-    import imctermite
+    from imctermite import ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
 
@@ -25,7 +25,7 @@ class TestStreaming:
         sample_file = DATASET_A / "datasetA_1.raw"
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
-        return imctermite.imctermite(str(sample_file).encode())
+        return ImcTermite(str(sample_file).encode())
 
     @pytest.fixture
     def first_channel_uuid(self, imc_instance):

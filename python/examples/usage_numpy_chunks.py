@@ -1,8 +1,6 @@
 
 import imctermite
-import json
 import os
-import numpy as np
 
 # Path to a sample file
 # Using sampleB.raw because it has integer data with scaling (factor=0.01, offset=327.68)
@@ -14,7 +12,7 @@ if not os.path.exists(raw_file):
 print(f"Loading {raw_file}")
 
 try:
-    imcraw = imctermite.imctermite(raw_file)
+    imcraw = imctermite.ImcTermite(raw_file)
 except RuntimeError as e:
     print(f"Failed to load/parse raw-file: {e}")
     exit(1)

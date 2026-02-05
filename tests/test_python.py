@@ -11,7 +11,7 @@ import numpy as np
 from pathlib import Path
 
 try:
-    import imctermite
+    from imctermite import ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
 
@@ -26,7 +26,7 @@ class TestModuleImport:
     
     def test_module_imports(self):
         """Module should import without errors"""
-        assert imctermite is not None
+        assert ImcTermite is not None
     
     def test_can_instantiate(self):
         """Should create instance with valid file"""
@@ -34,7 +34,7 @@ class TestModuleImport:
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
         
-        imc = imctermite.imctermite(str(sample_file).encode())
+        imc = ImcTermite(str(sample_file).encode())
         assert imc is not None
 
 
@@ -47,7 +47,7 @@ class TestChannelListing:
         sample_file = DATASET_A / "datasetA_1.raw"
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
-        return imctermite.imctermite(str(sample_file).encode())
+        return ImcTermite(str(sample_file).encode())
     
     def test_get_channel_list(self, imc_instance):
         """Should return list of channel metadata"""
@@ -89,7 +89,7 @@ class TestDataIntegrity:
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
         
-        imc = imctermite.imctermite(str(sample_file).encode())
+        imc = ImcTermite(str(sample_file).encode())
         return imc.get_channels(include_data=True)
     
     def test_data_arrays_not_empty(self, sample_data):
@@ -121,7 +121,7 @@ class TestChunkedNumpy:
         for raw_file in raw_files:
             # print(f"Testing {raw_file.name}")
             try:
-                imc = imctermite.imctermite(str(raw_file).encode())
+                imc = ImcTermite(str(raw_file).encode())
                 
                 # Get reference data
                 channels_ref = imc.get_channels(include_data=True)
@@ -195,7 +195,7 @@ class TestCSVOutput:
         sample_file = DATASET_A / "datasetA_1.raw"
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
-        return imctermite.imctermite(str(sample_file).encode())
+        return ImcTermite(str(sample_file).encode())
     
     def test_print_channel_to_csv(self, imc_instance, tmp_path):
         """Should create CSV file for single channel"""
@@ -273,7 +273,7 @@ class TestMultipleFiles:
         failed = []
         for sample_file in files_to_test:
             try:
-                imc = imctermite.imctermite(str(sample_file).encode())
+                imc = ImcTermite(str(sample_file).encode())
                 channels = imc.get_channels(include_data=False)
                 if len(channels) > 0:
                     successful += 1
@@ -299,7 +299,7 @@ class TestMultipleFiles:
         failed = []
         for sample_file in files_to_test:
             try:
-                imc = imctermite.imctermite(str(sample_file).encode())
+                imc = ImcTermite(str(sample_file).encode())
                 channels = imc.get_channels(include_data=True)
                 
                 # Verify we got data
@@ -333,11 +333,11 @@ class TestMultipleFiles:
             pytest.skip("Need at least 2 sample files")
         
         # Load first file
-        imc1 = imctermite.imctermite(str(file1).encode())
+        imc1 = ImcTermite(str(file1).encode())
         channels1 = imc1.get_channels(include_data=False)
         
         # Load second file
-        imc2 = imctermite.imctermite(str(file2).encode())
+        imc2 = ImcTermite(str(file2).encode())
         channels2 = imc2.get_channels(include_data=False)
         
         # Both should work
@@ -384,7 +384,7 @@ class TestDataRegression:
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
         
-        imc = imctermite.imctermite(str(sample_file).encode())
+        imc = ImcTermite(str(sample_file).encode())
         channels = imc.get_channels(include_data=True)
         
         # Check number of channels
@@ -452,7 +452,7 @@ class TestErrorHandling:
     def test_nonexistent_file(self):
         """Should raise error for nonexistent file"""
         with pytest.raises(Exception):
-            imctermite.imctermite(b"/nonexistent/file.raw")
+            ImcTermite(b"/nonexistent/file.raw")
     
     def test_invalid_channel_name(self):
         """Should handle invalid channel name gracefully"""
@@ -460,7 +460,7 @@ class TestErrorHandling:
         if not sample_file.exists():
             pytest.skip(f"Sample file not found: {sample_file}")
         
-        imc = imctermite.imctermite(str(sample_file).encode())
+        imc = ImcTermite(str(sample_file).encode())
         
         # This should either raise or return empty - both are acceptable
         try:

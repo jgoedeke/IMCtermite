@@ -37,16 +37,18 @@ test = ["pytest>=7.0.0"]
 Homepage = "https://github.com/RecordEvolution/IMCtermite.git"
 
 [tool.setuptools]
-# This is a single extension module build, not a package with subdirectories
-py-modules = []
-# Explicitly set packages to empty to prevent auto-discovery
-packages = []
+# This is a package (imctermite) that ships a native extension module.
+packages = ["imctermite"]
+include-package-data = false
 
 [tool.setuptools.dynamic]
 version = {file = "VERSION"}
 
 [tool.setuptools.package-data]
-"*" = ["py.typed", "*.pyi"]
+imctermite = ["py.typed", "*.pyi"]
+
+[tool.setuptools.exclude-package-data]
+imctermite = ["*.pyx", "*.cpp"]
 
 [tool.cibuildwheel]
 # Build for Python 3.10-3.13

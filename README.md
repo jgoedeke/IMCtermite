@@ -198,19 +198,19 @@ Given the `IMCtermite` module is available, we can import it and declare an inst
 of it by passing a _raw_ file to the constructor:
 
 ```Python
-import imctermite
+from imctermite import ImcTermite
 
-imcraw = imctermite.imctermite("sample/sampleA.raw")
+imcraw = ImcTermite("sample/sampleA.raw")
 ```
 
 An example of how to create an instance and obtain the list of channels is:
 
 ```Python
-import imctermite
+from imctermite import ImcTermite
 
 # declare and initialize instance of "imctermite" by passing a raw-file
 try :
-    imcraw = imctermite.imctermite("samples/sampleA.raw")
+    imcraw = ImcTermite("samples/sampleA.raw")
 except RuntimeError as e :
     print("failed to load/parse raw-file: " + str(e))
 

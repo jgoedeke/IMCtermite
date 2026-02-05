@@ -1,7 +1,8 @@
 # distutils: language = c++
 # cython: language_level = 3
 
-from imctermite cimport cppimctermite, channel_chunk
+from imctermite._native cimport cppimctermite, channel_chunk
+
 cimport numpy as cnp
 import numpy as np
 from libc.string cimport memcpy

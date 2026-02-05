@@ -1,8 +1,7 @@
 
 eatraw
 eatdev
-imctermite
-IMCtermite
+/imctermite
 
 nohup.out
 
@@ -37,11 +36,11 @@ python/README.md
 python/README.rst
 python/LICENSE
 python/build
-python/*.egg-info
+python/**/*.egg-info
 python/dist
-python/*.soc
+python/**/*.soc
 python/lib/
-python/*.cpp
+python/**/*.cpp
 python/wheelhouse/
 
 __pycache__/

@@ -19,7 +19,7 @@ def show_results(imcraw) :
     print("")
 
 # create instance of 'imctermite'
-imcraw = imctermite.imctermite("samples/sampleA.raw")
+imcraw = imctermite.ImcTermite("samples/sampleA.raw")
 
 show_results(imcraw)
 

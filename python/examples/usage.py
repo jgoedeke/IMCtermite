@@ -5,7 +5,7 @@ import os
 
 # declare and initialize instance of "imctermite" by passing a raw-file
 try :
-    imcraw = imctermite.imctermite("samples/exampleB.raw")
+    imcraw = imctermite.ImcTermite("samples/exampleB.raw")
 except RuntimeError as e :
     raise Exception("failed to load/parse raw-file: " + str(e))
 
