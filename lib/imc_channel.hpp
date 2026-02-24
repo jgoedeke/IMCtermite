@@ -282,12 +282,14 @@ namespace imc
     imc::range CR_;
     imc::channelobj CN_;
     imc::triggertime NT_;
+    bool has_cd_;
+    bool has_cr_;
 
     component_env compenv_;
 
     // Constructor to parse the associated blocks
     component_group(component_env &compenv, std::map<std::string, imc::block>* blocks, const unsigned char* buffer)
-        : compenv_(compenv)
+        : has_cd_(false), has_cr_(false), compenv_(compenv)
     {
         if (blocks->count(compenv.CCuuid_) == 1)
         {
@@ -300,6 +302,7 @@ namespace imc
         if (blocks->count(compenv.CDuuid_) == 1)
         {
             CD_.parse(buffer, blocks->at(compenv.CDuuid_).get_parameters());
+            has_cd_ = true;
         }
         if (blocks->count(compenv.Cbuuid_) == 1)
         {
@@ -308,6 +311,7 @@ namespace imc
         if (blocks->count(compenv.CRuuid_) == 1)
         {
             CR_.parse(buffer, blocks->at(compenv.CRuuid_).get_parameters());
+            has_cr_ = true;
         }
         if (blocks->count(compenv.NTuuid_) == 1)
         {
@@ -371,6 +375,11 @@ namespace imc
     channel(channel_env &chnenv, std::map<std::string,imc::block>* blocks,
                                  const unsigned char* buffer):
       chnenv_(chnenv), blocks_(blocks), buffer_(buffer),
+      trigger_time_frac_secs_(0.0),
+      xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
+      xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
+      xbuffer_offset_(0), ybuffer_offset_(0), xbuffer_size_(0), ybuffer_size_(0),
+      addtime_(0), xdatatp_(numtype::unsigned_byte), ydatatp_(numtype::unsigned_byte),
       xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
       group_index_(-1)
     {
@@ -428,20 +437,34 @@ namespace imc
         component_group comp_group1(chnenv_.compenv1_, blocks_, buffer_);
         dimension_ = 1;
 
+        if (!comp_group1.has_cd_)
+        {
+          throw std::runtime_error("missing CD key for single-component channel " + uuid_);
+        }
+
         xstepwidth_ = comp_group1.CD_.dx_;
         xunit_ = comp_group1.CD_.unit_;
         ybuffer_offset_ = comp_group1.Cb_.offset_buffer_;
         ybuffer_size_ = comp_group1.Cb_.number_bytes_;
         xstart_ = comp_group1.Cb_.x0_;
-        yfactor_ = comp_group1.CR_.factor_;
-        yoffset_ = comp_group1.CR_.offset_;
-        yunit_ = comp_group1.CR_.unit_;
         name_ = comp_group1.CN_.name_;
         yname_ = comp_group1.CN_.name_;
         comment_ = comp_group1.CN_.comment_;
         ynum_bytes_ = comp_group1.CP_.bytes_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
+        if (comp_group1.has_cr_ && ydatatp_ != numtype::two_byte_word_digital)
+        {
+          yfactor_ = comp_group1.CR_.factor_;
+          yoffset_ = comp_group1.CR_.offset_;
+          yunit_ = comp_group1.CR_.unit_;
+        }
+        else
+        {
+          yfactor_ = 1.0;
+          yoffset_ = 0.0;
+          yunit_.clear();
+        }
         // generate std::chrono::system_clock::time_point type
         std::time_t ts = timegm(&comp_group1.NT_.tms_); // std::mktime(&tms);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
@@ -469,14 +492,30 @@ namespace imc
         xbuffer_size_ = comp_group2.Cb_.number_bytes_;
         ybuffer_offset_ = comp_group1.Cb_.offset_buffer_;
         ybuffer_size_ = comp_group1.Cb_.number_bytes_;
-        xfactor_ = comp_group2.CR_.factor_;
-        xoffset_ = comp_group2.CR_.offset_;
-        yfactor_ = comp_group1.CR_.factor_;
-        yoffset_ = comp_group1.CR_.offset_;
         xdatatp_ = comp_group2.CP_.numeric_type_;
         xsignbits_ = comp_group2.CP_.signbits_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
+        if (comp_group2.has_cr_ && xdatatp_ != numtype::two_byte_word_digital)
+        {
+          xfactor_ = comp_group2.CR_.factor_;
+          xoffset_ = comp_group2.CR_.offset_;
+        }
+        else
+        {
+          xfactor_ = 1.0;
+          xoffset_ = 0.0;
+        }
+        if (comp_group1.has_cr_ && ydatatp_ != numtype::two_byte_word_digital)
+        {
+          yfactor_ = comp_group1.CR_.factor_;
+          yoffset_ = comp_group1.CR_.offset_;
+        }
+        else
+        {
+          yfactor_ = 1.0;
+          yoffset_ = 0.0;
+        }
         // generate std::chrono::system_clock::time_point type
         std::time_t ts = timegm(&comp_group2.NT_.tms_); // std::mktime(&tms);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
@@ -634,7 +673,7 @@ namespace imc
                 case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
                 case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
                 case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, 1.0, 0.0, temp_data); break;
                 case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
                 case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
                 case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
@@ -686,7 +725,7 @@ namespace imc
                         case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
                         case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
                         case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, 1.0, 0.0, temp_data); break;
                         case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
                         case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
                         case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;

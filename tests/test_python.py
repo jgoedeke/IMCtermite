@@ -184,6 +184,79 @@ class TestChunkedNumpy:
             
             except Exception as e:
                 pytest.fail(f"Failed processing {raw_file.name}: {str(e)}")
+
+    def test_datatype11_scaled_matches_raw(self):
+        """Datatype 11 (digital) must not apply CR scaling in scaled mode."""
+        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) +
+                           list(SAMPLES_DIR.glob("**/*.dat")))
+
+        checked = 0
+        for raw_file in raw_files:
+            imc = ImcTermite(str(raw_file).encode())
+            channels = imc.get_channels(include_data=False)
+
+            for channel in channels:
+                if str(channel.get('datatype')) != '11':
+                    continue
+
+                checked += 1
+                uuid = channel['uuid'].encode('utf-8')
+
+                raw_chunk = next(imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=256, mode="raw"))
+                scaled_chunk = next(imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=256, mode="scaled"))
+
+                expected = raw_chunk['y'].astype(np.float64)
+                assert scaled_chunk['y'].dtype == np.float64
+                assert np.array_equal(scaled_chunk['y'], expected), (
+                    f"Datatype 11 scaling mismatch in {raw_file.name} channel {channel['uuid']}"
+                )
+
+        if checked == 0:
+            pytest.skip("No datatype 11 channels found in bundled sample files")
+
+    def test_nondigital_scaled_matches_raw_with_metadata_transform(self):
+        """Non-digital channels should keep scaled = raw * factor + offset behavior."""
+        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) +
+                           list(SAMPLES_DIR.glob("**/*.dat")))
+
+        checked = 0
+        for raw_file in raw_files:
+            imc = ImcTermite(str(raw_file).encode())
+            channels = imc.get_channels(include_data=False)
+
+            for channel in channels:
+                datatype = str(channel.get('datatype'))
+                if datatype == '11':
+                    continue
+
+                try:
+                    factor = float(channel.get('factor', '1'))
+                    offset = float(channel.get('offset', '0'))
+                except (TypeError, ValueError):
+                    continue
+
+                uuid = channel['uuid'].encode('utf-8')
+                raw_chunk = next(imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=256, mode="raw"))
+                scaled_chunk = next(imc.iter_channel_numpy(uuid, include_x=False, chunk_rows=256, mode="scaled"))
+
+                if raw_chunk['y'].size == 0:
+                    continue
+
+                fact = 1.0 if factor == 0.0 else factor
+                expected = raw_chunk['y'].astype(np.float64) * fact + offset
+                assert np.allclose(scaled_chunk['y'], expected, rtol=0.0, atol=0.0, equal_nan=True), (
+                    f"Non-digital scaling mismatch in {raw_file.name} channel {channel['uuid']} "
+                    f"(datatype={datatype}, factor={factor}, offset={offset})"
+                )
+                checked += 1
+
+                if checked >= 20:
+                    break
+            if checked >= 20:
+                break
+
+        if checked == 0:
+            pytest.skip("No non-digital channels with parseable factor/offset found in bundled sample files")
     
 
 class TestCSVOutput:
