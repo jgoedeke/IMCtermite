@@ -175,6 +175,8 @@ namespace imc
     bool calibration_;
     std::string unit_;
 
+    abscissa(): dx_(1.0), calibration_(false), unit_("") {}
+
     // construct members by parsing particular parameters from buffer
     void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
     {
@@ -206,6 +208,9 @@ namespace imc
     bool sortbuffer_;
     double x0_;
     int pretriggerapp_;
+
+    abscissa2(): dx_(1.0), calibration_(false), unit_(""), reduction_(false),
+           ismultievent_(false), sortbuffer_(false), x0_(0.0), pretriggerapp_(0) {}
 
     // construct members by parsing particular parameters from buffer
     void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
@@ -377,6 +382,8 @@ namespace imc
     double factor_, offset_; // value = raw value * factor + offset
     bool calibration_;       // 1 = true: calibration, 0 = false: no calibration
     std::string unit_;
+
+    range(): transform_(false), factor_(1.0), offset_(0.0), calibration_(false), unit_("") {}
 
     // construct members by parsing particular parameters from buffer
     void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
