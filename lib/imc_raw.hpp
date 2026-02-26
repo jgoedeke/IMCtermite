@@ -84,6 +84,20 @@ namespace imc
       const unsigned char* data = buffer_.data();
       size_t size = buffer_.size();
 
+      // fail fast for IMC3 signature that is incompatible with IMC2 parser layout
+      if ( size >= 6
+           && data[0] == ch_bgn_
+           && (data[1] == 'i' || data[1] == 'I')
+           && (data[2] == 'm' || data[2] == 'M')
+           && (data[3] == 'c' || data[3] == 'C')
+           && data[4] == '3'
+           && data[5] == ch_sep_ )
+      {
+        throw std::runtime_error(
+          "unsupported IMC3 format: this build supports IMC2 .raw/.dat files only"
+        );
+      }
+
       // start parsing raw-blocks in buffer
       for ( unsigned long int i = 0; i < size; ++i )
       {

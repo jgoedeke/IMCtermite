@@ -108,6 +108,18 @@ class TestDataIntegrity:
             for val in channel['ydata']:
                 assert isinstance(val, (int, float))
 
+
+class TestUnsupportedFormats:
+    """Test clear errors for unsupported file formats"""
+
+    def test_imc3_signature_reports_unsupported_format(self, tmp_path):
+        """IMC3-like headers should fail with an explicit unsupported-format error."""
+        imc3_file = tmp_path / "unsupported_imc3.dat"
+        imc3_file.write_bytes(b"|imc3,1;|CB1\x00\x00\x00\x00")
+
+        with pytest.raises(RuntimeError, match="unsupported IMC3 format"):
+            ImcTermite(str(imc3_file).encode())
+
 class TestChunkedNumpy:
     """Test chunked NumPy API"""
 
