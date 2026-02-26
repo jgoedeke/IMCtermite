@@ -529,7 +529,18 @@ namespace imc
         
         if ( xnum_values != ynum_values )
         {
-          throw std::runtime_error("x and y data have different number of values");
+          throw std::runtime_error(
+            std::string("x and y data have different number of values")
+            + std::string(" (channel uuid='") + uuid_
+            + std::string("', name='") + name_
+            + std::string("', x_values=") + std::to_string(xnum_values)
+            + std::string(", y_values=") + std::to_string(ynum_values)
+            + std::string(", x_buffer_size=") + std::to_string(xCSbuffer_size)
+            + std::string(", y_buffer_size=") + std::to_string(yCSbuffer_size)
+            + std::string(", x_signbits=") + std::to_string(xsignbits_)
+            + std::string(", y_signbits=") + std::to_string(ysignbits_)
+            + std::string(")")
+          );
         }
         xprec_ = 9;
       }
