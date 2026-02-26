@@ -309,6 +309,9 @@ namespace imc
             chnenv.CTuuid_.clear();
             chnenv.CSuuid_.clear();
 
+            chnenv.compenv1_.reset();
+            chnenv.compenv2_.reset();
+
             compenv_ptr = nullptr;
           }
         }

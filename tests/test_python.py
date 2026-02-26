@@ -120,6 +120,80 @@ class TestUnsupportedFormats:
         with pytest.raises(RuntimeError, match="unsupported IMC3 format"):
             ImcTermite(str(imc3_file).encode())
 
+
+class TestChannelStateRegression:
+    """Regression tests for channel component state handling."""
+
+    @staticmethod
+    def _block(key: str, payload, version: int = 1) -> bytes:
+        if isinstance(payload, str):
+            payload_bytes = payload.encode("ascii")
+        else:
+            payload_bytes = payload
+        return (
+            b"|"
+            + key.encode("ascii")
+            + b","
+            + str(version).encode("ascii")
+            + b","
+            + str(len(payload_bytes)).encode("ascii")
+            + b","
+            + payload_bytes
+            + b";"
+        )
+
+    def test_component_state_is_reset_between_channels(self, tmp_path):
+        reg_file = tmp_path / "channel_state_regression.dat"
+
+        raw = bytearray()
+        raw += self._block("CF", "2,1", version=2)
+        raw += self._block("CK", "1,1")
+
+        raw += self._block("CG", "1,3,2")
+        raw += self._block("CD", "5E-2,1,1,s,0,0,0")
+        raw += self._block("NT", "1,1,2020,0,0,0.0")
+        raw += self._block("CC", "1,1")
+        raw += self._block("CP", "1,2,4,16,0,0,1,0")
+        raw += self._block("Cb", "1,0,1,1,0,4,0,4,1,0.0,0.0")
+        raw += self._block("CC", "2,1")
+        raw += self._block("CP", "2,2,4,16,0,0,1,0")
+        raw += self._block("Cb", "1,0,2,1,4,4,0,4,1,0.0,0.0")
+        raw += self._block("CN", "0,0,0,6,CHAN_A,1,A")
+        raw += self._block("CS", b"1," + bytes([1, 0, 2, 0, 11, 0, 12, 0]))
+
+        raw += self._block("CG", "1,1,1")
+        raw += self._block("CD", "1E-1,1,1,s,0,0,0")
+        raw += self._block("NT", "1,1,2020,0,0,0.0")
+        raw += self._block("CC", "1,1")
+        raw += self._block("CP", "1,2,4,16,0,0,1,0")
+        raw += self._block("Cb", "1,0,1,1,0,6,0,6,1,0.0,0.0")
+        raw += self._block("CN", "0,0,0,6,CHAN_B,1,B")
+        raw += self._block("CS", b"1," + bytes([21, 0, 22, 0, 23, 0]))
+
+        reg_file.write_bytes(raw)
+
+        imc = ImcTermite(str(reg_file).encode())
+        channels = {
+            channel["group"]["name"]: channel
+            for channel in imc.get_channels(include_data=False)
+        }
+
+        def count_rows(uuid: str) -> int:
+            total = 0
+            for chunk in imc.iter_channel_numpy(
+                uuid.encode("utf-8"),
+                include_x=True,
+                chunk_rows=1024,
+                mode="scaled",
+            ):
+                assert len(chunk["x"]) == len(chunk["y"])
+                total += len(chunk["y"])
+            return total
+
+        assert len(channels) == 2
+        assert count_rows(channels["CHAN_A"]["uuid"]) == 2
+        assert count_rows(channels["CHAN_B"]["uuid"]) == 3
+
 class TestChunkedNumpy:
     """Test chunked NumPy API"""
 
