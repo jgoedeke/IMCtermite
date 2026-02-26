@@ -43,6 +43,22 @@ class TestCLIBasics:
         )
         assert result.returncode != 0
 
+    def test_imc3_signature_reports_unsupported_format(self, tmp_path):
+        """Should return a clear error for IMC3-like files."""
+        unsupported = tmp_path / "unsupported_imc3.dat"
+        unsupported.write_bytes(b"|imc3,1;|CB1\x00\x00\x00\x00")
+
+        result = subprocess.run(
+            [str(CLI), str(unsupported), "--listchannels"],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode != 0
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "unsupported IMC3 format" in combined
+
 
 class TestChannelOperations:
     """Test channel listing and data extraction"""
