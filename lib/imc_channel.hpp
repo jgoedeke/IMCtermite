@@ -9,7 +9,9 @@
 #include <sstream>
 #include <math.h>
 #include <algorithm>
+#include <cstdint>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <time.h>
 #include <cstring>
@@ -65,7 +67,7 @@ namespace imc
     std::string NOuuid_, NLuuid_;
     // collect affiliate blocks for a single channel
     // channel types
-    std::string CBuuid_, CGuuid_, CIuuid_, CTuuid_;
+    std::string CBuuid_, CGuuid_, CIuuid_, CTuuid_, Cvuuid_, CVuuid_;
     std::string CNuuid_, CDuuid_, NTuuid_;
     std::string CSuuid_;
 
@@ -83,6 +85,8 @@ namespace imc
       CGuuid_.clear();
       CIuuid_.clear();
       CTuuid_.clear();
+      Cvuuid_.clear();
+      CVuuid_.clear();
       CNuuid_.clear();
       CDuuid_.clear();
       NTuuid_.clear();
@@ -103,6 +107,8 @@ namespace imc
         <<std::setw(width)<<std::left<<"CGuuid:"<<CGuuid_<<"\n"
         <<std::setw(width)<<std::left<<"CIuuid:"<<CIuuid_<<"\n"
         <<std::setw(width)<<std::left<<"CTuuid:"<<CTuuid_<<"\n"
+        <<std::setw(width)<<std::left<<"Cvuuid:"<<Cvuuid_<<"\n"
+        <<std::setw(width)<<std::left<<"CVuuid:"<<CVuuid_<<"\n"
         <<std::setw(width)<<std::left<<"CNuuid:"<<CNuuid_<<"\n"
         //
         <<std::setw(width)<<std::left<<"CCuuid:"<<compenv1_.CCuuid_<<"\n"
@@ -127,6 +133,8 @@ namespace imc
              <<"\",\"CGuuid\":\""<<CGuuid_
              <<"\",\"CIuuid\":\""<<CIuuid_
              <<"\",\"CTuuid\":\""<<CTuuid_
+             <<"\",\"Cvuuid\":\""<<Cvuuid_
+             <<"\",\"CVuuid\":\""<<CVuuid_
              <<"\",\"CNuuid\":\""<<CNuuid_
              <<"\",\"CCuuid\":\""<<compenv1_.CCuuid_
              <<"\",\"CPuuid\":\""<<compenv1_.CPuuid_
@@ -366,6 +374,218 @@ namespace imc
     double xoffset_, yoffset_;
     
     unsigned long int number_of_samples_ = 0;
+    bool has_event_description_ = false;
+    bool has_event_list_ = false;
+    bool event_overrides_present_ = false;
+    unsigned long int event_list_index_ = 0;
+    unsigned long int event_count_declared_ = 0;
+    unsigned long int event_count_parsed_ = 0;
+    int event_valid_nt_ = 0;
+    int event_valid_cd_ = 0;
+    int event_valid_cr1_ = 0;
+    int event_valid_cr2_ = 0;
+    std::vector<imc::event_entry> event_entries_;
+    bool trigger_time_from_events_ = false;
+    double first_event_time_seconds_ = 0.0;
+
+    static constexpr int EVENT_VALID_BIT_1 = 0x1;
+    static constexpr int EVENT_VALID_BIT_2 = 0x2;
+
+    static std::chrono::system_clock::time_point epoch_1980()
+    {
+      std::tm base = std::tm();
+      base.tm_year = 80;
+      base.tm_mon = 0;
+      base.tm_mday = 1;
+      std::time_t ts = timegm(&base);
+      return std::chrono::system_clock::from_time_t(ts);
+    }
+
+    void apply_event_time_override_if_available()
+    {
+      if ( !(event_valid_nt_ & EVENT_VALID_BIT_1) || event_entries_.empty() ) return;
+
+      double secs = event_entries_.front().time_seconds_;
+      double whole_part = std::floor(secs);
+      double frac_part = secs - whole_part;
+      if ( frac_part < 0.0 ) frac_part = 0.0;
+
+      trigger_time_ = epoch_1980() + std::chrono::seconds((long long)whole_part);
+      absolute_trigger_time_ = trigger_time_;
+      trigger_time_frac_secs_ = frac_part;
+      trigger_time_from_events_ = true;
+      first_event_time_seconds_ = secs;
+    }
+
+    template<typename T>
+    static double read_scalar_as_double(const unsigned char* ptr)
+    {
+      T val;
+      uint8_t* dst = reinterpret_cast<uint8_t*>(&val);
+      for ( size_t i = 0; i < sizeof(T); i++ ) dst[i] = ptr[i];
+      return static_cast<double>(val);
+    }
+
+    static double read_sample_as_double(numtype t, const unsigned char* ptr)
+    {
+      switch (t)
+      {
+        case numtype::unsigned_byte: return read_scalar_as_double<imc_Ubyte>(ptr);
+        case numtype::signed_byte: return read_scalar_as_double<imc_Sbyte>(ptr);
+        case numtype::unsigned_short: return read_scalar_as_double<imc_Ushort>(ptr);
+        case numtype::signed_short: return read_scalar_as_double<imc_Sshort>(ptr);
+        case numtype::unsigned_long: return read_scalar_as_double<imc_Ulongint>(ptr);
+        case numtype::signed_long: return read_scalar_as_double<imc_Slongint>(ptr);
+        case numtype::ffloat: return read_scalar_as_double<imc_float>(ptr);
+        case numtype::ddouble: return read_scalar_as_double<imc_double>(ptr);
+        case numtype::two_byte_word_digital: return read_scalar_as_double<imc_digital>(ptr);
+        case numtype::eight_byte_unsigned_long: return read_scalar_as_double<uint64_t>(ptr);
+        case numtype::eight_byte_signed_long: return read_scalar_as_double<int64_t>(ptr);
+        case numtype::six_byte_unsigned_long:
+        {
+          uint64_t val = 0;
+          for ( int i = 0; i < 6; i++ ) val |= ((uint64_t)ptr[i] << (8*i));
+          return static_cast<double>(val);
+        }
+        default:
+          throw std::runtime_error("Unsupported type for event-aware sample decoding: " + std::to_string(t));
+      }
+    }
+
+    bool use_event_direct_decode() const
+    {
+      return has_event_list_ && !event_entries_.empty() && dimension_ == 1;
+    }
+
+    void build_event_lookup(unsigned long int start,
+                            unsigned long int actual_count,
+                            std::vector<uint64_t>& raw_indices,
+                            std::vector<unsigned long int>& local_indices,
+                            std::vector<size_t>& event_indices)
+    {
+      raw_indices.assign(actual_count, 0);
+      local_indices.assign(actual_count, 0);
+      event_indices.assign(actual_count, 0);
+
+      uint64_t remaining = start;
+      size_t ev_idx = 0;
+      while (ev_idx < event_entries_.size() && remaining >= event_entries_[ev_idx].length_samples_)
+      {
+        remaining -= event_entries_[ev_idx].length_samples_;
+        ev_idx++;
+      }
+
+      for (unsigned long int i = 0; i < actual_count; ++i)
+      {
+        const imc::event_entry &ev = event_entries_[ev_idx];
+        raw_indices[i] = ev.offset_samples_ + remaining;
+        local_indices[i] = (unsigned long int)remaining;
+        event_indices[i] = ev_idx;
+        remaining++;
+        if (remaining >= ev.length_samples_ && ev_idx + 1 < event_entries_.size())
+        {
+          ev_idx++;
+          remaining = 0;
+        }
+      }
+    }
+
+    void decode_event_y(channel_chunk& chunk,
+                        bool raw_mode,
+                        unsigned long int actual_count,
+                        unsigned long int y_base,
+                        const std::vector<uint64_t>& raw_indices,
+                        const std::vector<size_t>& event_indices)
+    {
+      unsigned long int y_bytes_per_sample = ysignbits_ / 8;
+
+      if (raw_mode)
+      {
+        int type = (int)ydatatp_;
+        chunk.y_type = type;
+        if (type == 13)
+        {
+          chunk.y_bytes.resize(actual_count * 8);
+          uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
+          for (unsigned long int i = 0; i < actual_count; ++i)
+          {
+            const unsigned char* src = buffer_ + y_base + raw_indices[i] * 6;
+            uint64_t val = 0;
+            for (int b = 0; b < 6; ++b) val |= (uint64_t)src[b] << (b * 8);
+            dest[i] = val;
+          }
+        }
+        else
+        {
+          chunk.y_bytes.resize(actual_count * y_bytes_per_sample);
+          for (unsigned long int i = 0; i < actual_count; ++i)
+          {
+            const unsigned char* src = buffer_ + y_base + raw_indices[i] * y_bytes_per_sample;
+            unsigned char* dst = chunk.y_bytes.data() + i * y_bytes_per_sample;
+            std::copy(src, src + y_bytes_per_sample, dst);
+          }
+        }
+      }
+      else
+      {
+        chunk.y_type = 8;
+        chunk.y_bytes.resize(actual_count * sizeof(double));
+        double* ydst = reinterpret_cast<double*>(chunk.y_bytes.data());
+        for (unsigned long int i = 0; i < actual_count; ++i)
+        {
+          const imc::event_entry &ev = event_entries_[event_indices[i]];
+          double factor = yfactor_;
+          double offset = yoffset_;
+          if (event_valid_cr1_ & EVENT_VALID_BIT_1) factor = ev.y_factor_;
+          if (event_valid_cr1_ & EVENT_VALID_BIT_2) offset = ev.y_offset_;
+          if (factor == 0.0) factor = 1.0;
+
+          const unsigned char* src = buffer_ + y_base + raw_indices[i] * y_bytes_per_sample;
+          double raw_val = read_sample_as_double(ydatatp_, src);
+          ydst[i] = raw_val * factor + offset;
+        }
+      }
+    }
+
+    void decode_event_x(channel_chunk& chunk,
+                        unsigned long int actual_count,
+                        const std::vector<unsigned long int>& local_indices,
+                        const std::vector<size_t>& event_indices)
+    {
+      chunk.x_type = 8;
+      chunk.x_bytes.resize(actual_count * sizeof(double));
+      double* xdst = reinterpret_cast<double*>(chunk.x_bytes.data());
+      for (unsigned long int i = 0; i < actual_count; ++i)
+      {
+        const imc::event_entry &ev = event_entries_[event_indices[i]];
+        double dx = (event_valid_cd_ & EVENT_VALID_BIT_1) ? ev.dx_ : xstepwidth_;
+        double x0 = (event_valid_cd_ & EVENT_VALID_BIT_2) ? ev.x0_ : xstart_;
+        xdst[i] = x0 + (double)local_indices[i] * dx;
+      }
+    }
+
+    const char* trigger_time_source_label() const
+    {
+      return trigger_time_from_events_ ? "CV" : "NT/Cb";
+    }
+
+    void append_event_json(std::stringstream& ss) const
+    {
+      ss<<",\"events\":{"
+        <<"\"has-description\":"<<(has_event_description_?"true":"false")
+        <<",\"has-list\":"<<(has_event_list_?"true":"false")
+        <<",\"list-index\":"<<event_list_index_
+        <<",\"count-declared\":"<<event_count_declared_
+        <<",\"count-parsed\":"<<event_count_parsed_
+        <<",\"valid-nt\":"<<event_valid_nt_
+        <<",\"valid-cd\":"<<event_valid_cd_
+        <<",\"valid-cr1\":"<<event_valid_cr1_
+        <<",\"valid-cr2\":"<<event_valid_cr2_
+        <<",\"trigger-time-source\":\""<<trigger_time_source_label()<<"\""
+        <<",\"first-time-seconds\":"<<first_event_time_seconds_
+        <<",\"overrides\":"<<(event_overrides_present_?"true":"false")
+        <<"}";
+    }
 
     // group reference the channel belongs to
     unsigned long int group_index_;
@@ -424,6 +644,51 @@ namespace imc
 	group_index_ = CN_.group_index_;
 	group_name_ = CN_.name_;
 	group_comment_ = CN_.comment_;
+      }
+
+      if ( blocks_->count(chnenv_.Cvuuid_) == 1 )
+      {
+        imc::event_description evd;
+        evd.parse(buffer_, blocks_->at(chnenv_.Cvuuid_).get_parameters());
+        has_event_description_ = true;
+        event_list_index_ = evd.index_event_list_key_;
+        event_count_declared_ = evd.event_count_;
+        event_valid_nt_ = evd.valid_nt_;
+        event_valid_cd_ = evd.valid_cd_;
+        event_valid_cr1_ = evd.valid_cr1_;
+        event_valid_cr2_ = evd.valid_cr2_;
+        event_overrides_present_ = (event_valid_nt_ != 0 || event_valid_cd_ != 0
+            || event_valid_cr1_ != 0 || event_valid_cr2_ != 0);
+      }
+
+      std::string event_list_uuid = chnenv_.CVuuid_;
+      if ( has_event_description_ && event_list_uuid.empty() )
+      {
+        for ( std::map<std::string,imc::block>::iterator it = blocks_->begin();
+              it != blocks_->end(); ++it )
+        {
+          imc::block &blk = it->second;
+          if ( blk.get_key().name_ == "CV" )
+          {
+            imc::event_list evl;
+            evl.parse(buffer_, blk.get_parameters());
+            if ( evl.index_ == event_list_index_ )
+            {
+              event_list_uuid = blk.get_uuid();
+              break;
+            }
+          }
+        }
+      }
+
+      if ( !event_list_uuid.empty() && blocks_->count(event_list_uuid) == 1 )
+      {
+        imc::event_list evl;
+        evl.parse(buffer_, blocks_->at(event_list_uuid).get_parameters());
+        has_event_list_ = true;
+        event_count_parsed_ = (unsigned long int)evl.entries_.size();
+        if ( event_count_declared_ == 0 ) event_count_declared_ = evl.event_count_;
+        event_entries_ = evl.entries_;
       }
 
       if ( !chnenv_.compenv1_.uuid_.empty() && chnenv_.compenv2_.uuid_.empty() )
@@ -530,6 +795,9 @@ namespace imc
       // start converting binary buffer to imc::datatype
       if ( !chnenv_.CSuuid_.empty() ) init_metadata();
 
+      // for event channels, trigger-time can be defined per event list (ValidNT)
+      apply_event_time_override_if_available();
+
       // convert any non-UTF-8 codepage to UTF-8 and cleanse any text
       convert_encoding();
       cleanse_text();
@@ -555,6 +823,30 @@ namespace imc
       }
       
       number_of_samples_ = ynum_values;
+
+      if ( has_event_list_ && !event_entries_.empty() )
+      {
+        std::vector<imc::event_entry> normalized_entries;
+        normalized_entries.reserve(event_entries_.size());
+        unsigned long int total_event_samples = 0;
+        for ( const imc::event_entry &ev: event_entries_ )
+        {
+          if ( ev.offset_samples_ >= ynum_values ) continue;
+          uint64_t max_len = (uint64_t)ynum_values - ev.offset_samples_;
+          uint64_t eff_len = (std::min)(ev.length_samples_, max_len);
+          if ( eff_len == 0 ) continue;
+          imc::event_entry copy = ev;
+          copy.length_samples_ = eff_len;
+          normalized_entries.push_back(copy);
+          total_event_samples += (unsigned long int)eff_len;
+        }
+        if ( !normalized_entries.empty() && total_event_samples > 0 )
+        {
+          event_entries_ = normalized_entries;
+          event_count_parsed_ = (unsigned long int)event_entries_.size();
+          number_of_samples_ = total_event_samples;
+        }
+      }
 
       if (dimension_ ==  1)
       {
@@ -596,6 +888,23 @@ namespace imc
     // convert buffer to actual datatype (loads all data)
     void load_all_data()
     {
+      if ( has_event_list_ && !event_entries_.empty() && dimension_ == 1 )
+      {
+        ydata_.clear();
+        xdata_.clear();
+        channel_chunk all = read_chunk(0, number_of_samples_, true, false);
+        const double* yptr = reinterpret_cast<const double*>(all.y_bytes.data());
+        const double* xptr = reinterpret_cast<const double*>(all.x_bytes.data());
+        ydata_.reserve(number_of_samples_);
+        xdata_.reserve(number_of_samples_);
+        for ( unsigned long int i = 0; i < number_of_samples_; i++ )
+        {
+          ydata_.push_back(yptr[i]);
+          xdata_.push_back(xptr[i]);
+        }
+        return;
+      }
+
       std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
       unsigned long int buffstrt = prms[3].begin();
       const unsigned char* yCSbuffer = buffer_ + buffstrt + ybuffer_offset_ + 1;
@@ -645,7 +954,27 @@ namespace imc
         std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
         unsigned long int buffstrt = prms[3].begin();
 
+        bool event_direct_decode = use_event_direct_decode();
+
         // Handle Y data
+        if (event_direct_decode)
+        {
+          std::vector<uint64_t> raw_indices;
+          std::vector<unsigned long int> local_indices;
+          std::vector<size_t> event_indices;
+          build_event_lookup(start, actual_count, raw_indices, local_indices, event_indices);
+
+          unsigned long int y_base = buffstrt + ybuffer_offset_ + 1;
+          decode_event_y(chunk, raw_mode, actual_count, y_base, raw_indices, event_indices);
+
+          if (include_x)
+          {
+            decode_event_x(chunk, actual_count, local_indices, event_indices);
+          }
+
+          return chunk;
+        }
+
         if (raw_mode) {
             int type = (int)ydatatp_;
             unsigned long int bytes_per_sample = ysignbits_ / 8;
@@ -895,6 +1224,14 @@ namespace imc
         <<std::setw(width)<<std::left<<"offset:"<<yoffset_<<"\n"
         <<std::setw(width)<<std::left<<"group:"<<"("<<group_index_<<","<<group_name_
                                                     <<","<<group_comment_<<")"<<"\n"
+        <<std::setw(width)<<std::left<<"has-event-description:"<<(has_event_description_?"yes":"no")<<"\n"
+        <<std::setw(width)<<std::left<<"has-event-list:"<<(has_event_list_?"yes":"no")<<"\n"
+        <<std::setw(width)<<std::left<<"event-list-index:"<<event_list_index_<<"\n"
+        <<std::setw(width)<<std::left<<"event-count-declared:"<<event_count_declared_<<"\n"
+        <<std::setw(width)<<std::left<<"event-count-parsed:"<<event_count_parsed_<<"\n"
+        <<std::setw(width)<<std::left<<"event-overrides:"<<(event_overrides_present_?"yes":"no")<<"\n"
+        <<std::setw(width)<<std::left<<"trigger-time-source:"<<trigger_time_source_label()<<"\n"
+        <<std::setw(width)<<std::left<<"first-event-time-seconds:"<<first_event_time_seconds_<<"\n"
         <<std::setw(width)<<std::left<<"ydata:"<<imc::joinvec<imc::datatype>(ydata_,6,9,true)<<"\n"
         <<std::setw(width)<<std::left<<"xdata:"<<imc::joinvec<imc::datatype>(xdata_,6,xprec_,true)<<"\n";
         // <<std::setw(width)<<std::left<<"aff. blocks:"<<chnenv_.get_json()<<"\n";
@@ -913,15 +1250,15 @@ namespace imc
 
       std::stringstream ss;
       ss<<"{"<<"\"uuid\":\""<<uuid_
-             <<"\",\"name\":\""<<name_
-             <<"\",\"comment\":\""<<comment_
-             <<"\",\"origin\":\""<<origin_
-             <<"\",\"origin-comment\":\""<<origin_comment_
-             <<"\",\"description\":\""<<text_
+             <<"\",\"name\":\""<<prepjsonstr(name_)
+             <<"\",\"comment\":\""<<prepjsonstr(comment_)
+             <<"\",\"origin\":\""<<prepjsonstr(origin_)
+             <<"\",\"origin-comment\":\""<<prepjsonstr(origin_comment_)
+             <<"\",\"description\":\""<<prepjsonstr(text_)
              <<"\",\"trigger-time-nt\":\""<<std::put_time(std::gmtime(&tt),"%FT%T")
              <<"\",\"trigger-time\":\""<<std::put_time(std::gmtime(&att),"%FT%T")
-             <<"\",\"language-code\":\""<<language_code_
-             <<"\",\"codepage\":\""<<codepage_
+             <<"\",\"language-code\":\""<<prepjsonstr(language_code_)
+             <<"\",\"codepage\":\""<<prepjsonstr(codepage_)
              <<"\",\"yname\":\""<<prepjsonstr(yname_)
              <<"\",\"yunit\":\""<<prepjsonstr(yunit_)
              <<"\",\"datatype\":\""<<ydatatp_
@@ -934,8 +1271,9 @@ namespace imc
              <<"\",\"factor\":\""<<yfactor_
              <<"\",\"offset\":\""<<yoffset_
              <<"\",\"group\":{"<<"\"index\":\""<<group_index_
-                               <<"\",\"name\":\""<<group_name_
-                               <<"\",\"comment\":\""<<group_comment_<<"\""<<"}";
+             <<"\",\"name\":\""<<prepjsonstr(group_name_)
+             <<"\",\"comment\":\""<<prepjsonstr(group_comment_)<<"\""<<"}";
+      append_event_json(ss);
       if ( include_data )
       {
         ss<<",\"ydata\":"<<imc::joinvec<imc::datatype>(ydata_,0,9,true)

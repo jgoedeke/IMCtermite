@@ -3,6 +3,7 @@
 #ifndef IMCOBJECT
 #define IMCOBJECT
 
+#include <cstring>
 #include <time.h>
 #include <math.h>
 #include "imc_key.hpp"
@@ -464,6 +465,167 @@ namespace imc
     }
   };
 
+  struct event_description
+  {
+    unsigned long int index_event_list_key_;
+    unsigned long int offset_in_event_list_;
+    unsigned long int direct_follow_count_;
+    unsigned long int event_stride_;
+    unsigned long int event_count_;
+    int valid_nt_;
+    int valid_cd_;
+    int valid_cr1_;
+    int valid_cr2_;
+
+    event_description(): index_event_list_key_(0), offset_in_event_list_(0),
+      direct_follow_count_(0), event_stride_(0), event_count_(0),
+      valid_nt_(0), valid_cd_(0), valid_cr1_(0), valid_cr2_(0) {}
+
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
+    {
+      if ( parameters.size() < 11 ) throw std::runtime_error("invalid number of parameters in Cv");
+      index_event_list_key_ = std::stoul(get_parameter(buffer,&parameters[2]));
+      offset_in_event_list_ = std::stoul(get_parameter(buffer,&parameters[3]));
+      direct_follow_count_ = std::stoul(get_parameter(buffer,&parameters[4]));
+      event_stride_ = std::stoul(get_parameter(buffer,&parameters[5]));
+      event_count_ = std::stoul(get_parameter(buffer,&parameters[6]));
+      valid_nt_ = std::stoi(get_parameter(buffer,&parameters[7]));
+      valid_cd_ = std::stoi(get_parameter(buffer,&parameters[8]));
+      valid_cr1_ = std::stoi(get_parameter(buffer,&parameters[9]));
+      valid_cr2_ = std::stoi(get_parameter(buffer,&parameters[10]));
+    }
+
+    std::string get_info(int width = 20)
+    {
+      std::stringstream ss;
+      ss<<std::setw(width)<<std::left<<"event-list-index:"<<index_event_list_key_<<"\n"
+        <<std::setw(width)<<std::left<<"event-offset:"<<offset_in_event_list_<<"\n"
+        <<std::setw(width)<<std::left<<"direct-follow:"<<direct_follow_count_<<"\n"
+        <<std::setw(width)<<std::left<<"event-stride:"<<event_stride_<<"\n"
+        <<std::setw(width)<<std::left<<"event-count:"<<event_count_<<"\n"
+        <<std::setw(width)<<std::left<<"valid-nt:"<<valid_nt_<<"\n"
+        <<std::setw(width)<<std::left<<"valid-cd:"<<valid_cd_<<"\n"
+        <<std::setw(width)<<std::left<<"valid-cr1:"<<valid_cr1_<<"\n"
+        <<std::setw(width)<<std::left<<"valid-cr2:"<<valid_cr2_<<"\n";
+      return ss.str();
+    }
+  };
+
+  struct event_entry
+  {
+    uint64_t offset_samples_;
+    uint64_t length_samples_;
+    double time_seconds_;
+    double y_offset_;
+    double x_offset_;
+    double x0_;
+    double y_factor_;
+    double x_factor_;
+    double dx_;
+  };
+
+  struct event_list
+  {
+    unsigned long int index_;
+    unsigned long int event_count_;
+    std::vector<event_entry> entries_;
+
+    event_list(): index_(0), event_count_(0) {}
+
+    static uint32_t read_u32_le(const unsigned char* ptr)
+    {
+      return (uint32_t)ptr[0]
+           | ((uint32_t)ptr[1] << 8)
+           | ((uint32_t)ptr[2] << 16)
+           | ((uint32_t)ptr[3] << 24);
+    }
+
+    static double read_f64_le(const unsigned char* ptr)
+    {
+      uint64_t bits = 0;
+      for ( int i = 0; i < 8; i++ ) bits |= ((uint64_t)ptr[i] << (8*i));
+      double out = 0.0;
+      std::memcpy(&out, &bits, sizeof(double));
+      return out;
+    }
+
+    void parse(const unsigned char* buffer, const std::vector<parameter>& parameters)
+    {
+      if ( parameters.size() < 5 ) throw std::runtime_error("invalid number of parameters in CV");
+
+      size_t idx_pos = 2;
+      size_t cnt_pos = 3;
+      size_t raw_pos = 4;
+      if ( parameters.size() >= 6 )
+      {
+        idx_pos = 3;
+        cnt_pos = 4;
+        raw_pos = 5;
+      }
+
+      index_ = std::stoul(get_parameter(buffer,&parameters[idx_pos]));
+      event_count_ = std::stoul(get_parameter(buffer,&parameters[cnt_pos]));
+
+      const parameter &raw = parameters[raw_pos];
+      if ( raw.end() <= raw.begin() ) return;
+
+      const unsigned char* payload = buffer + raw.begin() + 1;
+      size_t payload_size = raw.end() - raw.begin();
+      size_t event_size = 64;
+      if ( event_count_ > 0 && payload_size / event_count_ >= 72 ) event_size = 72;
+      else if ( event_count_ > 0 && payload_size / event_count_ >= 64 ) event_size = 64;
+      else if ( payload_size % 72 == 0 ) event_size = 72;
+
+      size_t max_events_from_payload = payload_size / event_size;
+      size_t parse_count = (std::min)((size_t)event_count_, max_events_from_payload);
+
+      entries_.clear();
+      entries_.reserve(parse_count);
+
+      for ( size_t i = 0; i < parse_count; i++ )
+      {
+        const unsigned char* ev = payload + i*event_size;
+        uint64_t off_lo = read_u32_le(ev + 0);
+        uint64_t len_lo = read_u32_le(ev + 4);
+        double time = read_f64_le(ev + 8);
+        double off1 = read_f64_le(ev + 16);
+        double off2 = read_f64_le(ev + 24);
+        double x0 = read_f64_le(ev + 32);
+        double fac1 = read_f64_le(ev + 40);
+        double fac2 = read_f64_le(ev + 48);
+        double dx = read_f64_le(ev + 56);
+        uint64_t off_hi = 0;
+        uint64_t len_hi = 0;
+        if ( event_size >= 72 )
+        {
+          off_hi = read_u32_le(ev + 64);
+          len_hi = read_u32_le(ev + 68);
+        }
+
+        event_entry entry;
+        entry.offset_samples_ = (off_hi << 32) | off_lo;
+        entry.length_samples_ = (len_hi << 32) | len_lo;
+        entry.time_seconds_ = time;
+        entry.y_offset_ = off1;
+        entry.x_offset_ = off2;
+        entry.x0_ = x0;
+        entry.y_factor_ = fac1;
+        entry.x_factor_ = fac2;
+        entry.dx_ = dx;
+        entries_.push_back(entry);
+      }
+    }
+
+    std::string get_info(int width = 20)
+    {
+      std::stringstream ss;
+      ss<<std::setw(width)<<std::left<<"index:"<<index_<<"\n"
+        <<std::setw(width)<<std::left<<"event-count:"<<event_count_<<"\n"
+        <<std::setw(width)<<std::left<<"parsed-events:"<<entries_.size()<<"\n";
+      return ss.str();
+    }
+  };
+
   // language (corresponds to key NL)
   struct language
   {
@@ -561,6 +723,8 @@ namespace imc {
     origin_data org_; // 12
     triggertime trt_; // 13
     abscissa2 abs2_;  // 14
+    event_description evd_; // 15
+    event_list evl_;        // 16
     int objidx_;
 
   public:
@@ -645,6 +809,16 @@ namespace imc {
         abs2_.parse(buffer,parameters);
         objidx_ = 14;
       }
+      else if ( key.name_ == std::string("Cv") )
+      {
+        evd_.parse(buffer,parameters);
+        objidx_ = 15;
+      }
+      else if ( key.name_ == std::string("CV") )
+      {
+        evl_.parse(buffer,parameters);
+        objidx_ = 16;
+      }
       else
       {
         if ( key.name_.at(0) == 'C' )
@@ -696,6 +870,10 @@ namespace imc {
           return trt_.get_info();
         case 14:
           return abs2_.get_info();
+        case 15:
+          return evd_.get_info();
+        case 16:
+          return evl_.get_info();
         default:
           return std::string("");
       }

@@ -79,6 +79,8 @@ namespace imc
     key(true,"CN","name and comment of channel",1),
     key(true,"CS","raw binary data",1),
     key(true,"CI","single numerical value",1),
+    key(true,"Cv","single value (event list reference)",1),
+    key(true,"CV","single value event data",1),
     key(true,"Ca","add reference key",1),
 
     // noncritical keys

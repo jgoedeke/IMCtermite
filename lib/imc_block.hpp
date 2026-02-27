@@ -83,10 +83,12 @@ namespace imc
     void parse_parameters()
     {
       // parse entire block and check for separator tokens
-      // (consider only first four of any CS block)
+      // (consider only header commas for blocks with binary payload)
+      const int max_header_commas =
+        (thekey_.name_ == "CS") ? 4 : ((thekey_.name_ == "CV") ? 6 : -1);
       int count = 0;
       for ( unsigned long int b = begin_;
-        b < end_ && ( ! (thekey_.name_== "CS") || count < 4 ); b++ )
+        b < end_ && ( max_header_commas < 0 || count < max_header_commas ); b++ )
       {
         if ( buffer_[b] == imc::ch_sep_ )
         {

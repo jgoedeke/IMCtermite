@@ -238,6 +238,8 @@ namespace imc
         else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
+        else if ( blk.get_key().name_ == "Cv" ) chnenv.Cvuuid_ = blk.get_uuid();
+        else if ( blk.get_key().name_ == "CV" ) chnenv.CVuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CN" ) chnenv.CNuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CS" ) chnenv.CSuuid_ = blk.get_uuid();
 
@@ -307,6 +309,7 @@ namespace imc
             chnenv.CGuuid_.clear();
             chnenv.CIuuid_.clear();
             chnenv.CTuuid_.clear();
+            // Cv/CV may apply to subsequent channels; keep across channel boundary
             chnenv.CSuuid_.clear();
 
             chnenv.compenv1_.reset();
@@ -322,6 +325,8 @@ namespace imc
         else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
         else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
+        else if ( blk.get_key().name_ == "Cv" ) chnenv.Cvuuid_ = blk.get_uuid();
+        else if ( blk.get_key().name_ == "CV" ) chnenv.CVuuid_ = blk.get_uuid();
       }
     }
 

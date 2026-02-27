@@ -7,6 +7,7 @@ import pytest
 import os
 import tempfile
 import csv
+import struct
 import numpy as np
 from pathlib import Path
 
@@ -649,6 +650,113 @@ class TestErrorHandling:
         finally:
             if os.path.exists(output_file):
                 os.unlink(output_file)
+
+
+class TestEventMarkers:
+    """Synthetic tests for Cv/CV event semantics."""
+
+    @staticmethod
+    def _block(key: str, payload, version: int = 1) -> bytes:
+        if isinstance(payload, str):
+            payload_bytes = payload.encode("ascii")
+        else:
+            payload_bytes = payload
+        return (
+            b"|"
+            + key.encode("ascii")
+            + b","
+            + str(version).encode("ascii")
+            + b","
+            + str(len(payload_bytes)).encode("ascii")
+            + b","
+            + payload_bytes
+            + b";"
+        )
+
+    @staticmethod
+    def _ev72(offset_lo: int, length_lo: int, t: float, y_off: float, x_off: float, x0: float, y_fac: float, x_fac: float, dx: float) -> bytes:
+        return struct.pack("<II7dII", offset_lo, length_lo, t, y_off, x_off, x0, y_fac, x_fac, dx, 0, 0)
+
+    def test_event_validcd_and_validnt_are_applied(self, tmp_path):
+        test_file = tmp_path / "event_channel.dat"
+
+        raw = bytearray()
+        raw += self._block("CF", "2,1", version=2)
+        raw += self._block("CK", "1,1")
+        raw += self._block("CG", "1,1,1")
+        raw += self._block("CD", "1.0,1,1,s,0,0,0")
+        raw += self._block("NT", "1,1,2020,0,0,0.0")
+        raw += self._block("CC", "1,1")
+        raw += self._block("CP", "1,2,4,16,0,0,1,0")
+        raw += self._block("Cb", "1,0,1,1,0,20,0,20,1,0.0,0.0")
+
+        # Cv: index=1, offset=0, direct-follow=1, stride=0, count=2,
+        # valid_nt=1, valid_cd=3 (dx + x0 from event), valid_cr1/2=0
+        raw += self._block("Cv", "1,0,1,0,2,1,3,0,0")
+
+        ev_payload = (
+            b"1,2,"
+            + self._ev72(0, 5, 0.0, 0.0, 0.0, 10.0, 1.0, 1.0, 0.5)
+            + self._ev72(5, 5, 10.0, 0.0, 0.0, 20.0, 1.0, 1.0, 1.0)
+        )
+        raw += self._block("CV", ev_payload)
+
+        raw += self._block("CN", "0,0,0,6,EVT_CH,1,E")
+        raw += self._block("CS", b"1," + bytes([0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0, 9, 0]))
+
+        test_file.write_bytes(raw)
+
+        imc = ImcTermite(str(test_file).encode())
+        channels = imc.get_channels(include_data=False)
+        assert len(channels) == 1
+        ch = channels[0]
+
+        events = ch.get("events", {})
+        assert events.get("has-description") is True
+        assert events.get("has-list") is True
+        assert events.get("count-parsed") == 2
+        assert events.get("trigger-time-source") == "CV"
+        assert ch.get("trigger-time") == "1980-01-01T00:00:00"
+
+        uid = ch["uuid"].encode("utf-8")
+        chunk = next(imc.iter_channel_numpy(uid, include_x=True, chunk_rows=20, mode="scaled"))
+        x = chunk["x"]
+        y = chunk["y"]
+
+        expected_x = np.array([10.0, 10.5, 11.0, 11.5, 12.0, 20.0, 21.0, 22.0, 23.0, 24.0])
+        expected_y = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+        np.testing.assert_allclose(x, expected_x, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(y, expected_y, rtol=0, atol=1e-12)
+
+    def test_event_count_parsed_uses_72byte_records(self, tmp_path):
+        test_file = tmp_path / "event_count_72.dat"
+
+        raw = bytearray()
+        raw += self._block("CF", "2,1", version=2)
+        raw += self._block("CK", "1,1")
+        raw += self._block("CG", "1,1,1")
+        raw += self._block("CD", "1.0,1,1,s,0,0,0")
+        raw += self._block("NT", "1,1,2020,0,0,0.0")
+        raw += self._block("CC", "1,1")
+        raw += self._block("CP", "1,2,4,16,0,0,1,0")
+        raw += self._block("Cb", "1,0,1,1,0,12,0,12,1,0.0,0.0")
+        raw += self._block("Cv", "1,0,1,0,3,0,0,0,0")
+
+        ev_payload = (
+            b"1,3,"
+            + self._ev72(0, 2, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+            + self._ev72(2, 2, 2.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+            + self._ev72(4, 2, 3.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        )
+        raw += self._block("CV", ev_payload)
+        raw += self._block("CN", "0,0,0,5,EV72,1,E")
+        raw += self._block("CS", b"1," + bytes([1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0]))
+
+        test_file.write_bytes(raw)
+
+        imc = ImcTermite(str(test_file).encode())
+        ch = imc.get_channels(include_data=False)[0]
+        assert ch["events"]["count-parsed"] == 3
 
 
 if __name__ == "__main__":
