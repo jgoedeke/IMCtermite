@@ -1,6 +1,0 @@
-include lib/*.hpp
-include imctermite/*.pyx
-include imctermite/*.pxd
-include imctermite/*.pyi
-include imctermite/py.typed
-include VERSION

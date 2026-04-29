@@ -4,6 +4,7 @@ SHELL := /bin/bash
 
 # name of executable and CLI tool
 EXE = imctermite
+PYTHON ?= python3
 
 # directory names
 SRC = src/
@@ -87,30 +88,48 @@ docker-run:
 # python
 
 python-build: check-tags
-	make -C python/ build
-	cp python/imctermite*.so ./ -v 2>/dev/null || cp python/imctermite*.pyd ./ -v 2>/dev/null || true
+	$(PYTHON) -m pip install -e .
+
+python-sdist: check-tags
+	$(PYTHON) -m build --sdist
+	$(PYTHON) -m twine check dist/*
+
+python-wheel: check-tags
+	$(PYTHON) -m build --wheel
+	$(PYTHON) -m twine check dist/*
+
+python-dist: python-sdist python-wheel
+
+python-cibuildwheel: check-tags
+	$(PYTHON) -m cibuildwheel --output-dir wheelhouse
+
+python-pypi-upload:
+	$(PYTHON) -m twine upload "$$(ls -t dist/* | head -n1)"
 
 python-clean:
-	make -C python/ clean
+	rm -rvf build/ dist/ wheelhouse/ imctermite.egg-info/
+	rm -rvf python/build/ python/dist/ python/wheelhouse/ python/imctermite.egg-info/
 	rm -vf imctermite*.so imctermite*.pyd
+	rm -vf python/imctermite*.so python/imctermite*.pyd
+	rm -vf python/imctermite/*.so python/imctermite/*.pyd python/imctermite/*.cpp
 
 python-test:
-	PYTHONPATH=./ python3 python/examples/usage.py
+	PYTHONPATH=./ $(PYTHON) python/examples/usage.py
 
 #-----------------------------------------------------------------------------#
 # tests
 
 test: $(EXE) python-build
 	@echo "Running all tests..."
-	@PYTHONPATH=./ pytest
+	@PYTHONPATH=./ $(PYTHON) -m pytest
 
 test-cli: $(EXE)
 	@echo "Running CLI tests..."
-	@PYTHONPATH=./ pytest tests/test_cli.py
+	@PYTHONPATH=./ $(PYTHON) -m pytest tests/test_cli.py
 
 test-python: python-build
 	@echo "Running Python tests..."
-	@PYTHONPATH=./ pytest tests/test_python.py
+	@PYTHONPATH=./ $(PYTHON) -m pytest tests/test_python.py
 
 #-----------------------------------------------------------------------------#
 # clean

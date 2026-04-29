@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include python/VERSION
+include python/imctermite/*.pyx
+include python/imctermite/*.pxd
+include python/imctermite/*.pyi
+include python/imctermite/py.typed
+recursive-include lib *.hpp

@@ -12,6 +12,9 @@ raw_meat.cpp
 
 cython/*.cpp
 /build
+/dist/
+/wheelhouse/
+/*.egg-info/
 
 *.log
 *.so
