@@ -15,6 +15,7 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 DATASET_A = SAMPLES_DIR / "datasetA"
+IMC3_DIR = SAMPLES_DIR / "imc3"
 
 class TestStreaming:
     """Test iter_channel_numpy functionality"""
@@ -110,3 +111,35 @@ class TestStreaming:
         
         with pytest.raises(RuntimeError):
             list(imc_instance.iter_channel_numpy(b"non-existent-uuid"))
+
+    def test_imc3_xy_streaming_matches_full_load(self):
+        """IMC3 XY fixtures should stream the same x/y values as the eager API."""
+        sample_file = IMC3_DIR / "imc3_xy_dataset.dat"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=True)[0]
+
+        streamed = list(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=64))
+        streamed_x = np.concatenate([chunk["x"] for chunk in streamed])
+        streamed_y = np.concatenate([chunk["y"] for chunk in streamed])
+
+        np.testing.assert_allclose(streamed_x, np.array(channel["xdata"]), rtol=1e-9, atol=1e-9)
+        np.testing.assert_allclose(streamed_y, np.array(channel["ydata"]), rtol=1e-9, atol=1e-9)
+
+    def test_sanitized_imc3_streaming_matches_full_load(self):
+        """Sanitized streamed IMC3 fixtures should stream the same values as the eager API."""
+        sample_file = IMC3_DIR / "imc3_sanitized_02.raw"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=True)[0]
+
+        streamed = list(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=257))
+        streamed_x = np.concatenate([chunk["x"] for chunk in streamed])
+        streamed_y = np.concatenate([chunk["y"] for chunk in streamed])
+
+        np.testing.assert_allclose(streamed_x, np.array(channel["xdata"]), rtol=1e-9, atol=1e-9)
+        np.testing.assert_allclose(streamed_y, np.array(channel["ydata"]), rtol=1e-9, atol=1e-9)

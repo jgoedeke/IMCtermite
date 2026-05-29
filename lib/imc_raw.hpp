@@ -13,6 +13,7 @@
 #include "imc_datatype.hpp"
 #include "imc_object.hpp"
 #include "imc_channel.hpp"
+#include "imc_imc3.hpp"
 
 //---------------------------------------------------------------------------//
 
@@ -20,6 +21,12 @@ namespace imc
 {
   class raw
   {
+    enum class file_format
+    {
+      imc2,
+      imc3
+    };
+
     // (path of) raw-file and its basename
     std::string raw_file_, file_name_;
 
@@ -35,6 +42,9 @@ namespace imc
 
     // list groups and channels (including their affiliate blocks)
     std::map<std::string,imc::channel> channels_;
+
+    file_format format_ = file_format::imc2;
+    imc::imc3::dataset imc3_dataset_;
 
   public:
 
@@ -53,9 +63,22 @@ namespace imc
     {
       raw_file_ = raw_file;
       this->fill_buffer();
-      this->parse_blocks();
-      this->generate_block_map();
-      this->generate_channel_env();
+      rawblocks_.clear();
+      mapblocks_.clear();
+      channels_.clear();
+
+      if ( this->is_imc3_file() )
+      {
+        format_ = file_format::imc3;
+        imc3_dataset_.parse(buffer_.data(), buffer_.size());
+      }
+      else
+      {
+        format_ = file_format::imc2;
+        this->parse_blocks();
+        this->generate_block_map();
+        this->generate_channel_env();
+      }
     }
 
   private:
@@ -73,6 +96,13 @@ namespace imc
       }
     }
 
+    bool is_imc3_file() const
+    {
+      const unsigned char* data = buffer_.data();
+      size_t size = buffer_.size();
+      return size >= 8 && std::memcmp(data, "|imc3,1;", 8) == 0;
+    }
+
     // parse all raw blocks in buffer
     void parse_blocks()
     {
@@ -83,20 +113,6 @@ namespace imc
 
       const unsigned char* data = buffer_.data();
       size_t size = buffer_.size();
-
-      // fail fast for IMC3 signature that is incompatible with IMC2 parser layout
-      if ( size >= 6
-           && data[0] == ch_bgn_
-           && (data[1] == 'i' || data[1] == 'I')
-           && (data[2] == 'm' || data[2] == 'M')
-           && (data[3] == 'c' || data[3] == 'C')
-           && data[4] == '3'
-           && data[5] == ch_sep_ )
-      {
-        throw std::runtime_error(
-          "unsupported IMC3 format: this build supports IMC2 .raw/.dat files only"
-        );
-      }
 
       // start parsing raw-blocks in buffer
       for ( unsigned long int i = 0; i < size; ++i )
@@ -348,6 +364,11 @@ namespace imc
     // get list of channels with metadata
     std::vector<std::string> get_channels(bool json = false, bool include_data = false)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channels(json, include_data);
+      }
+
       std::vector<std::string> chns;
       for ( std::map<std::string,imc::channel>::iterator it = channels_.begin();
                                                          it != channels_.end(); ++it)
@@ -367,6 +388,51 @@ namespace imc
     // get particular channel including data by its uuid
     imc::channel get_channel(std::string uuid)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        const imc::imc3::channel& src = imc3_dataset_.get_channel(uuid);
+
+        imc::channel dst;
+        dst.uuid_ = src.uuid_;
+        dst.name_ = src.name_;
+        dst.comment_ = src.comment_;
+        dst.origin_ = src.origin_;
+        dst.origin_comment_ = src.origin_comment_;
+        dst.text_ = src.text_;
+        dst.trigger_time_ = src.trigger_time_;
+        dst.absolute_trigger_time_ = src.absolute_trigger_time_;
+        dst.language_code_ = src.language_code_;
+        dst.codepage_ = src.codepage_;
+        dst.yname_ = src.yname_;
+        dst.yunit_ = src.yunit_;
+        dst.xname_ = src.xname_;
+        dst.xunit_ = src.xunit_;
+        dst.xstepwidth_ = src.xstepwidth_;
+        dst.xstart_ = src.xstart_;
+        dst.xprec_ = src.xprec_;
+        dst.dimension_ = src.dimension_;
+        dst.xsignbits_ = src.xsignbits_;
+        dst.ysignbits_ = src.ysignbits_;
+        dst.xnum_bytes_ = src.xsignbits_ / 8;
+        dst.ynum_bytes_ = src.ysignbits_ / 8;
+        dst.xbuffer_offset_ = src.xbuffer_offset_;
+        dst.ybuffer_offset_ = src.ybuffer_offset_;
+        dst.xbuffer_size_ = src.xbuffer_size_;
+        dst.ybuffer_size_ = src.ybuffer_size_;
+        dst.xdatatp_ = src.xdatatp_;
+        dst.ydatatp_ = src.ydatatp_;
+        dst.xfactor_ = src.xfactor_;
+        dst.yfactor_ = src.yfactor_;
+        dst.xoffset_ = src.xoffset_;
+        dst.yoffset_ = src.yoffset_;
+        dst.number_of_samples_ = src.number_of_samples_;
+        dst.group_index_ = src.group_index_;
+        dst.group_name_ = src.group_name_;
+        dst.group_comment_ = src.group_comment_;
+        dst.set_direct_buffer(src.raw_data_);
+        return dst;
+      }
+
       if ( channels_.count(uuid) )
       {
         return channels_.at(uuid);
@@ -397,6 +463,11 @@ namespace imc
     // list all channels
     std::vector<std::string> list_channels()
     {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.list_channels();
+      }
+
       std::vector<std::string> channels;
       for ( imc::block blk: this->rawblocks_ )
       {
@@ -413,6 +484,11 @@ namespace imc
     // get length of a channel
     unsigned long int get_channel_length(std::string uuid)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channel_length(uuid);
+      }
+
       if ( channels_.count(uuid) )
       {
         return channels_.at(uuid).number_of_samples_;
@@ -426,6 +502,11 @@ namespace imc
     // get numeric type of a channel
     int get_channel_numeric_type(std::string uuid)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channel_numeric_type(uuid);
+      }
+
       if ( channels_.count(uuid) )
       {
         return (int)channels_.at(uuid).ydatatp_;
@@ -439,6 +520,11 @@ namespace imc
     // read a chunk of channel data
     channel_chunk read_channel_chunk(std::string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.read_channel_chunk(uuid, start, count, include_x, raw_mode);
+      }
+
       if ( !channels_.count(uuid) )
       {
         throw std::runtime_error(std::string("channel does not exist:") + uuid);
@@ -450,6 +536,12 @@ namespace imc
     // print single specific channel
     void print_channel(std::string channeluuid, std::string outputfile, const char sep, unsigned long int chunk_size = 100000)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        imc3_dataset_.print_channel(channeluuid, outputfile, sep, chunk_size);
+        return;
+      }
+
       // check for given parent directory of output file
       std::filesystem::path pdf = outputfile;
       if ( !std::filesystem::is_directory(pdf.parent_path()) )
@@ -473,6 +565,12 @@ namespace imc
     // print all channels into given directory
     void print_channels(std::string output, const char sep, unsigned long int chunk_size = 100000)
     {
+      if ( format_ == file_format::imc3 )
+      {
+        imc3_dataset_.print_channels(output, sep, chunk_size);
+        return;
+      }
+
       // check for given directory
       std::filesystem::path pd = output;
       if ( !std::filesystem::is_directory(pd) )
@@ -493,6 +591,13 @@ namespace imc
         // and print the channel using streaming
         it->second.print(pf.u8string(),sep,25,9,chunk_size);
       }
+    }
+
+    unsigned long int channel_count()
+    {
+      return format_ == file_format::imc3
+        ? static_cast<unsigned long int>(imc3_dataset_.channel_count())
+        : static_cast<unsigned long int>(channels_.size());
     }
 
   };

@@ -211,7 +211,7 @@ int main(int argc, char* argv[])
     }
 
     // catch invalid or empty ".raw" file
-    if ( imcraw.blocks().size() == 0 )
+    if ( imcraw.blocks().size() == 0 && imcraw.channel_count() == 0 )
     {
       std::cerr<<"this appears to be an empty/invalid '.raw' file since no blocks were found"<<"\n";
       return 1;

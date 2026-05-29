@@ -328,6 +328,8 @@ namespace imc
     channel_env chnenv_;
     std::map<std::string,imc::block>* blocks_;
     const unsigned char* buffer_;
+    const unsigned char* direct_buffer_;
+    bool direct_buffer_mode_;
 
     imc::origin_data NO_;
     imc::language NL_;
@@ -371,10 +373,21 @@ namespace imc
     unsigned long int group_index_;
     std::string group_uuid_, group_name_, group_comment_;
 
+    channel():
+      blocks_(nullptr), buffer_(nullptr), direct_buffer_(nullptr), direct_buffer_mode_(false),
+      trigger_time_frac_secs_(0.0),
+      xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
+      xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
+      xbuffer_offset_(0), ybuffer_offset_(0), xbuffer_size_(0), ybuffer_size_(0),
+      addtime_(0), xdatatp_(numtype::unsigned_byte), ydatatp_(numtype::unsigned_byte),
+      xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
+      number_of_samples_(0), group_index_(static_cast<unsigned long int>(-1))
+    {}
+
     // constructor takes channel's block environment
     channel(channel_env &chnenv, std::map<std::string,imc::block>* blocks,
                                  const unsigned char* buffer):
-      chnenv_(chnenv), blocks_(blocks), buffer_(buffer),
+      chnenv_(chnenv), blocks_(blocks), buffer_(buffer), direct_buffer_(nullptr), direct_buffer_mode_(false),
       trigger_time_frac_secs_(0.0),
       xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
       xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
@@ -535,6 +548,13 @@ namespace imc
       cleanse_text();
     }
 
+    void set_direct_buffer(const unsigned char* direct_buffer)
+    {
+      direct_buffer_ = direct_buffer;
+      direct_buffer_mode_ = true;
+      buffer_ = direct_buffer;
+    }
+
     // initialize metadata without loading data
     void init_metadata()
     {
@@ -596,6 +616,17 @@ namespace imc
     // convert buffer to actual datatype (loads all data)
     void load_all_data()
     {
+      if ( direct_buffer_mode_ )
+      {
+        channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
+        const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
+        ydata_.assign(y_ptr, y_ptr + chunk.count);
+
+        const double* x_ptr = reinterpret_cast<const double*>(chunk.x_bytes.data());
+        xdata_.assign(x_ptr, x_ptr + chunk.count);
+        return;
+      }
+
       std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
       unsigned long int buffstrt = prms[3].begin();
       const unsigned char* yCSbuffer = buffer_ + buffstrt + ybuffer_offset_ + 1;
@@ -624,6 +655,128 @@ namespace imc
 
     channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
+      if (direct_buffer_mode_) {
+        unsigned long int total_len = number_of_samples_;
+
+        if (start >= total_len) {
+          return { {}, {}, start, 0, include_x, 0, 0 };
+        }
+
+        unsigned long int end = start + count;
+        if (end > total_len) end = total_len;
+        unsigned long int actual_count = end - start;
+
+        channel_chunk chunk;
+        chunk.start = start;
+        chunk.count = actual_count;
+        chunk.has_x = include_x;
+        chunk.x_type = 0;
+        chunk.y_type = 0;
+
+        const unsigned char* y_base = direct_buffer_ + ybuffer_offset_;
+        if (raw_mode) {
+          int type = static_cast<int>(ydatatp_);
+          unsigned long int bytes_per_sample = static_cast<unsigned long int>(ysignbits_ / 8);
+          unsigned long int byte_offset = start * bytes_per_sample;
+          unsigned long int byte_count = actual_count * bytes_per_sample;
+
+          if (type == static_cast<int>(numtype::six_byte_unsigned_long)) {
+            chunk.y_type = type;
+            chunk.y_bytes.resize(actual_count * 8);
+            uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
+            for (unsigned long int i = 0; i < actual_count; ++i) {
+              uint64_t val = 0;
+              for (int b = 0; b < 6; ++b) {
+                val |= static_cast<uint64_t>(y_base[byte_offset + i * 6 + b]) << (b * 8);
+              }
+              dest[i] = val;
+            }
+          } else {
+            chunk.y_type = type;
+            chunk.y_bytes.resize(byte_count);
+            std::copy(y_base + byte_offset, y_base + byte_offset + byte_count, chunk.y_bytes.begin());
+          }
+        } else {
+          chunk.y_type = static_cast<int>(numtype::ddouble);
+          chunk.y_bytes.resize(actual_count * sizeof(double));
+          std::vector<double> temp_data;
+          switch (ydatatp_) {
+            case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(y_base, start, actual_count, 1.0, 0.0, temp_data); break;
+            case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
+            default: throw std::runtime_error("Unsupported type for direct chunk reading (Y): " + std::to_string(ydatatp_));
+          }
+          memcpy(chunk.y_bytes.data(), temp_data.data(), temp_data.size() * sizeof(double));
+        }
+
+        if (include_x) {
+          if (dimension_ == 2) {
+            const unsigned char* x_base = direct_buffer_ + xbuffer_offset_;
+            if (raw_mode) {
+              int type = static_cast<int>(xdatatp_);
+              unsigned long int bytes_per_sample = static_cast<unsigned long int>(xsignbits_ / 8);
+              unsigned long int byte_offset = start * bytes_per_sample;
+              unsigned long int byte_count = actual_count * bytes_per_sample;
+
+              if (type == static_cast<int>(numtype::six_byte_unsigned_long)) {
+                chunk.x_type = type;
+                chunk.x_bytes.resize(actual_count * 8);
+                uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
+                for (unsigned long int i = 0; i < actual_count; ++i) {
+                  uint64_t val = 0;
+                  for (int b = 0; b < 6; ++b) {
+                    val |= static_cast<uint64_t>(x_base[byte_offset + i * 6 + b]) << (b * 8);
+                  }
+                  dest[i] = val;
+                }
+              } else {
+                chunk.x_type = type;
+                chunk.x_bytes.resize(byte_count);
+                std::copy(x_base + byte_offset, x_base + byte_offset + byte_count, chunk.x_bytes.begin());
+              }
+            } else {
+              chunk.x_type = static_cast<int>(numtype::ddouble);
+              chunk.x_bytes.resize(actual_count * sizeof(double));
+              std::vector<double> temp_data;
+              switch (xdatatp_) {
+                case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(x_base, start, actual_count, 1.0, 0.0, temp_data); break;
+                case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                default: throw std::runtime_error("Unsupported type for direct chunk reading (X): " + std::to_string(xdatatp_));
+              }
+              memcpy(chunk.x_bytes.data(), temp_data.data(), temp_data.size() * sizeof(double));
+            }
+          } else {
+            chunk.x_type = static_cast<int>(numtype::ddouble);
+            chunk.x_bytes.resize(actual_count * sizeof(double));
+            double* ptr = reinterpret_cast<double*>(chunk.x_bytes.data());
+            for (unsigned long int i = 0; i < actual_count; ++i) {
+              ptr[i] = xstart_ + static_cast<double>(start + i) * xstepwidth_;
+            }
+          }
+        }
+
+        return chunk;
+      }
+
         unsigned long int total_len = number_of_samples_;
 
         if ( start >= total_len )

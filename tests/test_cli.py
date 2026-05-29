@@ -13,6 +13,16 @@ CLI = PROJECT_ROOT / "imctermite"
 if sys.platform == "win32":
     CLI = CLI.with_suffix(".exe")
 SAMPLES_DIR = PROJECT_ROOT / "samples" / "datasetA"
+IMC3_DIR = PROJECT_ROOT / "samples" / "imc3"
+SANITIZED_IMC3_SAMPLES = [
+    ("imc3_sanitized_01.raw", 1),
+    ("imc3_sanitized_02.raw", 1),
+    ("imc3_sanitized_03.raw", 1),
+    ("imc3_sanitized_04.raw", 1),
+    ("imc3_sanitized_05.raw", 1),
+    ("imc3_sanitized_06.raw", 1),
+    ("imc3_sanitized_bundle.dat", 6),
+]
 
 
 class TestCLIBasics:
@@ -43,21 +53,45 @@ class TestCLIBasics:
         )
         assert result.returncode != 0
 
-    def test_imc3_signature_reports_unsupported_format(self, tmp_path):
-        """Should return a clear error for IMC3-like files."""
-        unsupported = tmp_path / "unsupported_imc3.dat"
-        unsupported.write_bytes(b"|imc3,1;|CB1\x00\x00\x00\x00")
+    @pytest.mark.parametrize(
+        "sample_name,expected_text",
+        [
+            ("imc3_single-channel.dat", "AmplitudeSpectrum"),
+            ("imc3_multi-channel.dat", "name:               x"),
+            ("imc3_xy_dataset.dat", "circle"),
+        ],
+    )
+    def test_imc3_samples_list_channels(self, sample_name, expected_text):
+        """Bundled IMC3 fixtures should list channels successfully."""
+        sample = IMC3_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
 
         result = subprocess.run(
-            [str(CLI), str(unsupported), "--listchannels"],
+            [str(CLI), str(sample), "--listchannels"],
             capture_output=True,
             text=True,
             errors='replace'
         )
 
-        assert result.returncode != 0
-        combined = (result.stdout or "") + (result.stderr or "")
-        assert "unsupported IMC3 format" in combined
+        assert result.returncode == 0
+        assert expected_text in result.stdout
+
+    @pytest.mark.parametrize("sample_name,expected_channels", SANITIZED_IMC3_SAMPLES)
+    def test_sanitized_imc3_files_list_channels(self, sample_name, expected_channels):
+        sample = IMC3_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--listchannels"],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        assert result.stdout.count("uuid:") == expected_channels
 
 
 class TestChannelOperations:
