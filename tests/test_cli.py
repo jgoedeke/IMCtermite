@@ -290,6 +290,22 @@ class TestExitCodes:
         )
         assert result.returncode != 0
 
+    def test_empty_file_reports_format_neutral_message(self, tmp_path):
+        """Empty files should use the format-neutral no-data error message."""
+        empty_file = tmp_path / "empty.raw"
+        empty_file.write_bytes(b"")
+
+        result = subprocess.run(
+            [str(CLI), str(empty_file), "--listchannels"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+
+        assert result.returncode != 0
+        assert "empty or unreadable IMC file" in result.stderr
+        assert "no channels or blocks were found" in result.stderr
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

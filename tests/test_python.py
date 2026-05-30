@@ -97,6 +97,17 @@ class TestChannelListing:
         assert isinstance(first_channel['ydata'], list)
         assert len(first_channel['xdata']) == len(first_channel['ydata'])
 
+    def test_imc2_multichannel_order_matches_file_order(self):
+        """IMC2 get_channels should preserve source-file channel order."""
+        sample_file = SAMPLES_DIR / "exampleB.raw"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel['uuid'] for channel in channels] == ['377', '707', '1038']
+
 
 class TestDataIntegrity:
     """Test data extraction and validation"""
@@ -272,6 +283,40 @@ class TestIMC3Support:
         single_raw = single.get_channel_data(single_channel["uuid"], include_x=False, mode="raw")
         bundle_raw = bundle.get_channel_data(bundle_channel["uuid"], include_x=False, mode="raw")
         np.testing.assert_array_equal(single_raw["y"], bundle_raw["y"])
+
+
+class TestJsonEscaping:
+    """Regression tests for JSON metadata escaping."""
+
+    def test_metadata_with_control_characters_stays_valid_json(self, tmp_path):
+        reg_file = tmp_path / "json_escape_regression.raw"
+
+        name = b'LINE\nTAB\tQ"'
+        comment = b'COMMENT\tWITH\nQUOTE"'
+        raw = bytearray()
+        raw += TestChannelStateRegression._block("CF", "2,1", version=2)
+        raw += TestChannelStateRegression._block("CK", "1,1")
+        raw += TestChannelStateRegression._block("CG", "1,1,1")
+        raw += TestChannelStateRegression._block("CD", "1E-1,1,1,s,0,0,0")
+        raw += TestChannelStateRegression._block("NT", "1,1,2020,0,0,0.0")
+        raw += TestChannelStateRegression._block("CC", "1,1")
+        raw += TestChannelStateRegression._block("CP", "1,2,4,16,0,0,1,0")
+        raw += TestChannelStateRegression._block("Cb", "1,0,1,1,0,4,0,4,1,0.0,0.0")
+        raw += TestChannelStateRegression._block(
+            "CN",
+            b"0,0,0,"
+            + str(len(name)).encode("ascii")
+            + b"," + name
+            + b"," + str(len(comment)).encode("ascii")
+            + b"," + comment,
+        )
+        raw += TestChannelStateRegression._block("CS", b"1," + bytes([1, 0, 2, 0]))
+        reg_file.write_bytes(raw)
+
+        channel = ImcTermite(str(reg_file).encode()).get_channels(include_data=False)[0]
+
+        assert channel["group"]["name"] == name.decode("ascii")
+        assert channel["group"]["comment"] == comment.decode("ascii")
 
 
 class TestChannelStateRegression:

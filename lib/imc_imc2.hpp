@@ -1,0 +1,409 @@
+//---------------------------------------------------------------------------//
+
+#ifndef IMCIMC2
+#define IMCIMC2
+
+#include <filesystem>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "imc_block.hpp"
+#include "imc_channel.hpp"
+#include "imc_datatype.hpp"
+#include "imc_key.hpp"
+#include "imc_object.hpp"
+
+//---------------------------------------------------------------------------//
+
+namespace imc
+{
+  namespace imc2
+  {
+    class dataset
+    {
+      std::string raw_file_;
+      const unsigned char* buffer_ = nullptr;
+      size_t buffer_size_ = 0;
+
+      std::vector<imc::block> rawblocks_;
+      std::map<std::string,imc::block> mapblocks_;
+      unsigned long int cplxcnt_ = 0;
+      std::map<std::string,imc::channel> channels_;
+      std::vector<std::string> channel_order_;
+
+      void check_consistency()
+      {
+        for ( unsigned long int b = 0; b < this->rawblocks_.size()-1 && this->rawblocks_.size() > 0; b++ )
+        {
+          if ( this->rawblocks_[b].get_end() >= this->rawblocks_[b+1].get_begin() )
+          {
+            throw std::runtime_error(
+              std::string("inconsistent subsequent blocks:\n")
+              + std::to_string(b) + std::string("-th block:\n") + this->rawblocks_[b].get_info()
+              + std::string("\n")
+              + std::to_string(b+1) + std::string("-th block:\n") + this->rawblocks_[b+1].get_info() );
+          }
+        }
+      }
+
+      void parse_blocks()
+      {
+        rawblocks_.clear();
+        cplxcnt_ = 0;
+
+        for ( unsigned long int i = 0; i < buffer_size_; ++i )
+        {
+          cplxcnt_++;
+
+          if ( buffer_[i] == ch_bgn_ )
+          {
+            if ( buffer_[i+1] == imc::key_crit_ || buffer_[i+1] == imc::key_non_crit_ )
+            {
+              std::string newkey = { (char)buffer_[i+1], (char)buffer_[i+2] };
+              imc::key itkey(buffer_[i+1] == imc::key_crit_,newkey);
+
+              if ( buffer_[i+3] == ch_sep_ )
+              {
+                std::string vers("");
+                unsigned long int pos = 4;
+                while ( buffer_[i+pos] != ch_sep_ )
+                {
+                  vers.push_back((char)buffer_[i+pos]);
+                  pos++;
+                }
+                int version = std::stoi(vers);
+
+                itkey.version_ = version;
+                itkey = imc::get_key(itkey.critical_,itkey.name_,itkey.version_);
+
+                if ( imc::check_key(itkey) )
+                {
+                  std::string leng("");
+                  pos++;
+                  while ( buffer_[i+pos] != ch_sep_ )
+                  {
+                    leng.push_back((char)buffer_[i+pos]);
+                    pos++;
+                  }
+                  unsigned long int length = std::stoul(leng);
+
+                  imc::block blk(itkey,i,
+                                       i+pos+1+length,
+                                       raw_file_, buffer_, buffer_size_);
+
+                  rawblocks_.push_back(blk);
+
+                  if ( i+length < buffer_size_ )
+                  {
+                    i += length;
+                  }
+                }
+                else
+                {
+                  if ( buffer_[i+1] == imc::key_crit_ )
+                  {
+                    throw std::runtime_error(
+                      std::string("unknown critical key: ") + newkey + std::to_string(version)
+                    );
+                  }
+                  else
+                  {
+                    std::cout<<"WARNING: unknown noncritical key '"
+                             <<newkey<<version<<"' will be ignored\n";
+                  }
+                }
+              }
+              else
+              {
+                throw std::runtime_error(
+                    std::string("invalid block or corrupt buffer at byte: ")
+                  + std::to_string(i+3)
+                );
+              }
+            }
+          }
+        }
+
+        this->check_consistency();
+      }
+
+      void generate_block_map()
+      {
+        mapblocks_.clear();
+
+        for ( imc::block blk: rawblocks_ )
+        {
+          mapblocks_.insert( std::pair<std::string,imc::block>(blk.get_uuid(),blk) );
+        }
+      }
+
+      void generate_channel_env()
+      {
+        channels_.clear();
+        channel_order_.clear();
+
+        imc::channel_env chnenv;
+        chnenv.reset();
+
+        imc::component_env *compenv_ptr = nullptr;
+
+        for ( imc::block blk: rawblocks_ )
+        {
+          if ( blk.get_key().name_ == "NO" ) chnenv.NOuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "NL" ) chnenv.NLuuid_ = blk.get_uuid();
+
+          else if ( blk.get_key().name_ == "CB" ) chnenv.CBuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CN" ) chnenv.CNuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CS" ) chnenv.CSuuid_ = blk.get_uuid();
+
+          else if ( blk.get_key().name_ == "CC" )
+          {
+            imc::component component;
+            component.parse(buffer_, blk.get_parameters());
+            if ( component.component_index_ == 1 ) compenv_ptr = &chnenv.compenv1_;
+            else if ( component.component_index_ == 2 ) compenv_ptr = &chnenv.compenv2_;
+            else throw std::runtime_error("invalid component index in CC block");
+            compenv_ptr->CCuuid_ = blk.get_uuid();
+            compenv_ptr->uuid_ = compenv_ptr->CCuuid_;
+          }
+          else if ( blk.get_key().name_ == "CD" )
+          {
+            if (compenv_ptr == nullptr) chnenv.CDuuid_ = blk.get_uuid();
+            else compenv_ptr->CDuuid_ = blk.get_uuid();
+          }
+          else if ( blk.get_key().name_ == "NT" )
+          {
+            if (compenv_ptr == nullptr) chnenv.NTuuid_ = blk.get_uuid();
+            else compenv_ptr->NTuuid_ = blk.get_uuid();
+          }
+          else if ( blk.get_key().name_ == "Cb" ) compenv_ptr->Cbuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CP" ) compenv_ptr->CPuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CR" ) compenv_ptr->CRuuid_ = blk.get_uuid();
+
+          if ( !chnenv.CNuuid_.empty() )
+          {
+            if ( blk.get_key().name_ == "CB" || blk.get_key().name_ == "CG"
+              || blk.get_key().name_ == "CI" || blk.get_key().name_ == "CT"
+              || blk.get_key().name_ == "CS" )
+            {
+              chnenv.uuid_ = chnenv.CNuuid_;
+
+              if ( chnenv.CSuuid_.empty() ) {
+                for ( imc::block blkCS: rawblocks_ ) {
+                  if ( blkCS.get_key().name_ == "CS"
+                    && blkCS.get_begin() > (unsigned long int)stol(chnenv.uuid_) ) {
+                    chnenv.CSuuid_ = blkCS.get_uuid();
+                  }
+                }
+              }
+
+              const std::string channel_uuid = chnenv.CNuuid_;
+              channels_.insert( std::pair<std::string,imc::channel>
+                (channel_uuid,imc::channel(chnenv,&mapblocks_,buffer_))
+              );
+              channel_order_.push_back(channel_uuid);
+
+              chnenv.CNuuid_.clear();
+
+              chnenv.CBuuid_.clear();
+              chnenv.CGuuid_.clear();
+              chnenv.CIuuid_.clear();
+              chnenv.CTuuid_.clear();
+              chnenv.CSuuid_.clear();
+
+              chnenv.compenv1_.reset();
+              chnenv.compenv2_.reset();
+
+              compenv_ptr = nullptr;
+            }
+          }
+
+          if ( blk.get_key().name_ == "CB" ) chnenv.CBuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
+        }
+      }
+
+    public:
+      dataset() = default;
+
+      void clear()
+      {
+        raw_file_.clear();
+        buffer_ = nullptr;
+        buffer_size_ = 0;
+        rawblocks_.clear();
+        mapblocks_.clear();
+        cplxcnt_ = 0;
+        channels_.clear();
+        channel_order_.clear();
+      }
+
+      void reset()
+      {
+        clear();
+      }
+
+      void parse(const std::string& raw_file, const unsigned char* buffer, size_t buffer_size)
+      {
+        clear();
+        raw_file_ = raw_file;
+        buffer_ = buffer;
+        buffer_size_ = buffer_size;
+        parse_blocks();
+        generate_block_map();
+        generate_channel_env();
+      }
+
+      std::vector<imc::block>& blocks()
+      {
+        return rawblocks_;
+      }
+
+      unsigned long int& computational_complexity()
+      {
+        return cplxcnt_;
+      }
+
+      std::vector<std::string> get_channels(bool json = false, bool include_data = false)
+      {
+        std::vector<std::string> chns;
+        for ( const std::string& uuid : channel_order_ )
+        {
+          imc::channel& channel = channels_.at(uuid);
+          if ( !json )
+          {
+            chns.push_back(channel.get_info());
+          }
+          else
+          {
+            chns.push_back(channel.get_json(include_data));
+          }
+        }
+        return chns;
+      }
+
+      imc::channel get_channel(const std::string& uuid)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<imc::block> list_blocks(const imc::key &mykey)
+      {
+        std::vector<imc::block> myblocks;
+        for ( imc::block blk: this->rawblocks_ )
+        {
+          if ( blk.get_key() == mykey ) myblocks.push_back(blk);
+        }
+        return myblocks;
+      }
+
+      std::vector<imc::block> list_groups()
+      {
+        return this->list_blocks(imc::get_key(true,"CB"));
+      }
+
+      std::vector<std::string> list_channels()
+      {
+        std::vector<std::string> channels;
+        for ( const std::string& uuid : channel_order_ )
+        {
+          channels.push_back(channels_.at(uuid).name_);
+        }
+        return channels;
+      }
+
+      unsigned long int get_channel_length(const std::string& uuid)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).number_of_samples_;
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      int get_channel_numeric_type(const std::string& uuid)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return static_cast<int>(channels_.at(uuid).ydatatp_);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      channel_chunk read_channel_chunk(const std::string& uuid, unsigned long int start,
+                                       unsigned long int count, bool include_x, bool raw_mode)
+      {
+        if ( !channels_.count(uuid) )
+        {
+          throw std::runtime_error(std::string("channel does not exist:") + uuid);
+        }
+
+        return channels_.at(uuid).read_chunk(start, count, include_x, raw_mode);
+      }
+
+      void print_channel(const std::string& channeluuid, const std::string& outputfile,
+                         const char sep, unsigned long int chunk_size = 100000)
+      {
+        std::filesystem::path pdf = outputfile;
+        if ( !std::filesystem::is_directory(pdf.parent_path()) )
+        {
+          throw std::runtime_error(std::string("required directory does not exist: ")
+                                   + pdf.parent_path().u8string() );
+        }
+
+        if ( channels_.count(channeluuid) == 1 )
+        {
+          channels_.at(channeluuid).print(outputfile,sep,25,9,chunk_size);
+        }
+        else
+        {
+          throw std::runtime_error(std::string("channel does not exist:")
+                                   + channeluuid);
+        }
+      }
+
+      void print_channels(const std::string& output, const char sep,
+                          unsigned long int chunk_size = 100000)
+      {
+        std::filesystem::path pd = output;
+        if ( !std::filesystem::is_directory(pd) )
+        {
+          throw std::runtime_error(std::string("given directory does not exist: ")
+                                   + output);
+        }
+
+        for ( const std::string& uuid : channel_order_ )
+        {
+          imc::channel& channel = channels_.at(uuid);
+          std::string chid = std::string("channel_") + uuid;
+          std::string filenam = channel.name_.empty() ? chid + std::string(".csv")
+                                             : channel.name_ + std::string(".csv");
+          std::filesystem::path pf = pd / filenam;
+
+          channel.print(pf.u8string(),sep,25,9,chunk_size);
+        }
+
+      }
+
+      unsigned long int channel_count()
+      {
+        return static_cast<unsigned long int>(channel_order_.size());
+      }
+    };
+  }
+}
+
+#endif
+
+//---------------------------------------------------------------------------//

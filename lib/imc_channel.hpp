@@ -6,6 +6,7 @@
 #include "imc_datatype.hpp"
 #include "imc_conversion.hpp"
 #include "imc_block.hpp"
+#include <functional>
 #include <sstream>
 #include <math.h>
 #include <algorithm>
@@ -15,14 +16,55 @@
 #include <cstring>
 #if defined(__linux__) || defined(__APPLE__)
 #include <iconv.h>
-#elif defined(__WIN32__) || defined(_WIN32)
-#define timegm _mkgmtime
 #endif
 
 //---------------------------------------------------------------------------//
 
 namespace imc
 {
+  inline std::time_t utc_timegm(std::tm* value)
+  {
+#if defined(__WIN32__) || defined(_WIN32)
+    return _mkgmtime(value);
+#else
+    return timegm(value);
+#endif
+  }
+
+  inline std::string escape_json_string(const std::string& value)
+  {
+    static const char* hex = "0123456789abcdef";
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for ( unsigned char ch : value )
+    {
+      switch ( ch )
+      {
+        case '"': escaped += "\\\""; break;
+        case '\\': escaped += "\\\\"; break;
+        case '\b': escaped += "\\b"; break;
+        case '\f': escaped += "\\f"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default:
+          if ( ch < 0x20 )
+          {
+            escaped += "\\u00";
+            escaped.push_back(hex[(ch >> 4) & 0x0f]);
+            escaped.push_back(hex[ch & 0x0f]);
+          }
+          else
+          {
+            escaped.push_back(static_cast<char>(ch));
+          }
+      }
+    }
+
+    return escaped;
+  }
+
   struct channel_chunk {
     std::vector<unsigned char> x_bytes;
     std::vector<unsigned char> y_bytes;
@@ -32,6 +74,8 @@ namespace imc
     int x_type;
     int y_type;
   };
+
+  using channel_chunk_reader = std::function<channel_chunk(unsigned long int, unsigned long int, bool, bool)>;
 
   struct component_env
   {
@@ -328,8 +372,7 @@ namespace imc
     channel_env chnenv_;
     std::map<std::string,imc::block>* blocks_;
     const unsigned char* buffer_;
-    const unsigned char* direct_buffer_;
-    bool direct_buffer_mode_;
+    channel_chunk_reader chunk_reader_;
 
     imc::origin_data NO_;
     imc::language NL_;
@@ -374,7 +417,7 @@ namespace imc
     std::string group_uuid_, group_name_, group_comment_;
 
     channel():
-      blocks_(nullptr), buffer_(nullptr), direct_buffer_(nullptr), direct_buffer_mode_(false),
+      blocks_(nullptr), buffer_(nullptr),
       trigger_time_frac_secs_(0.0),
       xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
       xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
@@ -387,7 +430,7 @@ namespace imc
     // constructor takes channel's block environment
     channel(channel_env &chnenv, std::map<std::string,imc::block>* blocks,
                                  const unsigned char* buffer):
-      chnenv_(chnenv), blocks_(blocks), buffer_(buffer), direct_buffer_(nullptr), direct_buffer_mode_(false),
+      chnenv_(chnenv), blocks_(blocks), buffer_(buffer),
       trigger_time_frac_secs_(0.0),
       xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
       xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
@@ -479,7 +522,7 @@ namespace imc
           yunit_.clear();
         }
         // generate std::chrono::system_clock::time_point type
-        std::time_t ts = timegm(&comp_group1.NT_.tms_); // std::mktime(&tms);
+        std::time_t ts = imc::utc_timegm(&comp_group1.NT_.tms_);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
         trigger_time_frac_secs_ = comp_group1.NT_.trigger_time_frac_secs_;
         // calculate absolute trigger-time
@@ -530,7 +573,7 @@ namespace imc
           yoffset_ = 0.0;
         }
         // generate std::chrono::system_clock::time_point type
-        std::time_t ts = timegm(&comp_group2.NT_.tms_); // std::mktime(&tms);
+        std::time_t ts = imc::utc_timegm(&comp_group2.NT_.tms_);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
         trigger_time_frac_secs_ = comp_group2.NT_.trigger_time_frac_secs_;
         absolute_trigger_time_ = trigger_time_;
@@ -548,11 +591,9 @@ namespace imc
       cleanse_text();
     }
 
-    void set_direct_buffer(const unsigned char* direct_buffer)
+    void set_chunk_reader(channel_chunk_reader chunk_reader)
     {
-      direct_buffer_ = direct_buffer;
-      direct_buffer_mode_ = true;
-      buffer_ = direct_buffer;
+      chunk_reader_ = std::move(chunk_reader);
     }
 
     // initialize metadata without loading data
@@ -616,7 +657,7 @@ namespace imc
     // convert buffer to actual datatype (loads all data)
     void load_all_data()
     {
-      if ( direct_buffer_mode_ )
+      if ( chunk_reader_ )
       {
         channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
         const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
@@ -655,126 +696,9 @@ namespace imc
 
     channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
-      if (direct_buffer_mode_) {
-        unsigned long int total_len = number_of_samples_;
-
-        if (start >= total_len) {
-          return { {}, {}, start, 0, include_x, 0, 0 };
-        }
-
-        unsigned long int end = start + count;
-        if (end > total_len) end = total_len;
-        unsigned long int actual_count = end - start;
-
-        channel_chunk chunk;
-        chunk.start = start;
-        chunk.count = actual_count;
-        chunk.has_x = include_x;
-        chunk.x_type = 0;
-        chunk.y_type = 0;
-
-        const unsigned char* y_base = direct_buffer_ + ybuffer_offset_;
-        if (raw_mode) {
-          int type = static_cast<int>(ydatatp_);
-          unsigned long int bytes_per_sample = static_cast<unsigned long int>(ysignbits_ / 8);
-          unsigned long int byte_offset = start * bytes_per_sample;
-          unsigned long int byte_count = actual_count * bytes_per_sample;
-
-          if (type == static_cast<int>(numtype::six_byte_unsigned_long)) {
-            chunk.y_type = type;
-            chunk.y_bytes.resize(actual_count * 8);
-            uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
-            for (unsigned long int i = 0; i < actual_count; ++i) {
-              uint64_t val = 0;
-              for (int b = 0; b < 6; ++b) {
-                val |= static_cast<uint64_t>(y_base[byte_offset + i * 6 + b]) << (b * 8);
-              }
-              dest[i] = val;
-            }
-          } else {
-            chunk.y_type = type;
-            chunk.y_bytes.resize(byte_count);
-            std::copy(y_base + byte_offset, y_base + byte_offset + byte_count, chunk.y_bytes.begin());
-          }
-        } else {
-          chunk.y_type = static_cast<int>(numtype::ddouble);
-          chunk.y_bytes.resize(actual_count * sizeof(double));
-          std::vector<double> temp_data;
-          switch (ydatatp_) {
-            case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(y_base, start, actual_count, 1.0, 0.0, temp_data); break;
-            case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(y_base, start, actual_count, yfactor_, yoffset_, temp_data); break;
-            default: throw std::runtime_error("Unsupported type for direct chunk reading (Y): " + std::to_string(ydatatp_));
-          }
-          memcpy(chunk.y_bytes.data(), temp_data.data(), temp_data.size() * sizeof(double));
-        }
-
-        if (include_x) {
-          if (dimension_ == 2) {
-            const unsigned char* x_base = direct_buffer_ + xbuffer_offset_;
-            if (raw_mode) {
-              int type = static_cast<int>(xdatatp_);
-              unsigned long int bytes_per_sample = static_cast<unsigned long int>(xsignbits_ / 8);
-              unsigned long int byte_offset = start * bytes_per_sample;
-              unsigned long int byte_count = actual_count * bytes_per_sample;
-
-              if (type == static_cast<int>(numtype::six_byte_unsigned_long)) {
-                chunk.x_type = type;
-                chunk.x_bytes.resize(actual_count * 8);
-                uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
-                for (unsigned long int i = 0; i < actual_count; ++i) {
-                  uint64_t val = 0;
-                  for (int b = 0; b < 6; ++b) {
-                    val |= static_cast<uint64_t>(x_base[byte_offset + i * 6 + b]) << (b * 8);
-                  }
-                  dest[i] = val;
-                }
-              } else {
-                chunk.x_type = type;
-                chunk.x_bytes.resize(byte_count);
-                std::copy(x_base + byte_offset, x_base + byte_offset + byte_count, chunk.x_bytes.begin());
-              }
-            } else {
-              chunk.x_type = static_cast<int>(numtype::ddouble);
-              chunk.x_bytes.resize(actual_count * sizeof(double));
-              std::vector<double> temp_data;
-              switch (xdatatp_) {
-                case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(x_base, start, actual_count, 1.0, 0.0, temp_data); break;
-                case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(x_base, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                default: throw std::runtime_error("Unsupported type for direct chunk reading (X): " + std::to_string(xdatatp_));
-              }
-              memcpy(chunk.x_bytes.data(), temp_data.data(), temp_data.size() * sizeof(double));
-            }
-          } else {
-            chunk.x_type = static_cast<int>(numtype::ddouble);
-            chunk.x_bytes.resize(actual_count * sizeof(double));
-            double* ptr = reinterpret_cast<double*>(chunk.x_bytes.data());
-            for (unsigned long int i = 0; i < actual_count; ++i) {
-              ptr[i] = xstart_ + static_cast<double>(start + i) * xstepwidth_;
-            }
-          }
-        }
-
-        return chunk;
+      if ( chunk_reader_ )
+      {
+        return chunk_reader_(start, count, include_x, raw_mode);
       }
 
         unsigned long int total_len = number_of_samples_;
@@ -1065,30 +989,30 @@ namespace imc
       std::time_t att = std::chrono::system_clock::to_time_t(absolute_trigger_time_);
 
       std::stringstream ss;
-      ss<<"{"<<"\"uuid\":\""<<uuid_
-             <<"\",\"name\":\""<<name_
-             <<"\",\"comment\":\""<<comment_
-             <<"\",\"origin\":\""<<origin_
-             <<"\",\"origin-comment\":\""<<origin_comment_
-             <<"\",\"description\":\""<<text_
+            ss<<"{"<<"\"uuid\":\""<<imc::escape_json_string(uuid_)
+              <<"\",\"name\":\""<<imc::escape_json_string(name_)
+              <<"\",\"comment\":\""<<imc::escape_json_string(comment_)
+              <<"\",\"origin\":\""<<imc::escape_json_string(origin_)
+              <<"\",\"origin-comment\":\""<<imc::escape_json_string(origin_comment_)
+              <<"\",\"description\":\""<<imc::escape_json_string(text_)
              <<"\",\"trigger-time-nt\":\""<<std::put_time(std::gmtime(&tt),"%FT%T")
              <<"\",\"trigger-time\":\""<<std::put_time(std::gmtime(&att),"%FT%T")
-             <<"\",\"language-code\":\""<<language_code_
-             <<"\",\"codepage\":\""<<codepage_
-             <<"\",\"yname\":\""<<prepjsonstr(yname_)
-             <<"\",\"yunit\":\""<<prepjsonstr(yunit_)
+              <<"\",\"language-code\":\""<<imc::escape_json_string(language_code_)
+              <<"\",\"codepage\":\""<<imc::escape_json_string(codepage_)
+              <<"\",\"yname\":\""<<imc::escape_json_string(yname_)
+              <<"\",\"yunit\":\""<<imc::escape_json_string(yunit_)
              <<"\",\"datatype\":\""<<ydatatp_
              <<"\",\"significantbits\":\""<<ysignbits_
              <<"\",\"buffer-size\":\""<<ybuffer_size_
-             <<"\",\"xname\":\""<<prepjsonstr(xname_)
-             <<"\",\"xunit\":\""<<prepjsonstr(xunit_)
+              <<"\",\"xname\":\""<<imc::escape_json_string(xname_)
+              <<"\",\"xunit\":\""<<imc::escape_json_string(xunit_)
              <<"\",\"xstepwidth\":\""<<xstepwidth_
              <<"\",\"xoffset\":\""<<xstart_
              <<"\",\"factor\":\""<<yfactor_
              <<"\",\"offset\":\""<<yoffset_
              <<"\",\"group\":{"<<"\"index\":\""<<group_index_
-                               <<"\",\"name\":\""<<group_name_
-                               <<"\",\"comment\":\""<<group_comment_<<"\""<<"}";
+                 <<"\",\"name\":\""<<imc::escape_json_string(group_name_)
+                 <<"\",\"comment\":\""<<imc::escape_json_string(group_comment_)<<"\""<<"}";
       if ( include_data )
       {
         ss<<",\"ydata\":"<<imc::joinvec<imc::datatype>(ydata_,0,9,true)
@@ -1099,26 +1023,6 @@ namespace imc
 
       return ss.str();
     }
-
-    // prepare string value for usage in JSON dump
-    std::string prepjsonstr(std::string value)
-    {
-      std::stringstream ss;
-      ss<<quoted(value);
-      return strip_quotes(ss.str());
-    }
-
-    // remove any leading or trailing double quotes
-    std::string strip_quotes(std::string astring)
-    {
-      // head
-      if ( astring.front() == '"' ) astring.erase(astring.begin()+0);
-      // tail
-      if ( astring.back() == '"' ) astring.erase(astring.end()-1);
-
-      return astring;
-    }
-
     // print channel
     void print(std::string filename, const char sep = ',', int width = 25, int yprec = 9, unsigned long int chunk_size = 100000)
     {

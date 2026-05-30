@@ -161,11 +161,6 @@ namespace imc
         | (static_cast<uint32_t>(data[offset + 3]) << 24);
     }
 
-    inline std::string trim_codepage(const std::string& text)
-    {
-      return text;
-    }
-
     inline size_t bytes_per_numeric_type(imc::numtype type)
     {
       switch ( type )
@@ -224,7 +219,7 @@ namespace imc
       epoch_tm.tm_year = 80;
       epoch_tm.tm_mon = 0;
       epoch_tm.tm_mday = 1;
-      std::time_t epoch = timegm(&epoch_tm);
+      std::time_t epoch = imc::utc_timegm(&epoch_tm);
       auto base = std::chrono::system_clock::from_time_t(epoch);
       auto duration = std::chrono::duration_cast<std::chrono::system_clock::duration>(
         std::chrono::duration<double>(seconds_since_1980)
@@ -286,22 +281,6 @@ namespace imc
       unsigned long int number_of_samples_ = 0;
       unsigned long int group_index_ = 0;
       const unsigned char* raw_data_ = nullptr;
-
-      std::string prepjsonstr(const std::string& value) const
-      {
-        std::stringstream ss;
-        ss << std::quoted(value);
-        std::string quoted_value = ss.str();
-        if ( !quoted_value.empty() && quoted_value.front() == '"' )
-        {
-          quoted_value.erase(quoted_value.begin());
-        }
-        if ( !quoted_value.empty() && quoted_value.back() == '"' )
-        {
-          quoted_value.pop_back();
-        }
-        return quoted_value;
-      }
 
       void append_raw_bytes(std::vector<unsigned char>& out, const unsigned char* base, unsigned long int start,
                             unsigned long int count, int type) const
@@ -484,30 +463,30 @@ namespace imc
         std::time_t att = std::chrono::system_clock::to_time_t(absolute_trigger_time_);
 
         std::stringstream ss;
-        ss << "{" << "\"uuid\":\"" << uuid_
-           << "\",\"name\":\"" << prepjsonstr(name_)
-           << "\",\"comment\":\"" << prepjsonstr(comment_)
-           << "\",\"origin\":\"" << prepjsonstr(origin_)
-           << "\",\"origin-comment\":\"" << prepjsonstr(origin_comment_)
-           << "\",\"description\":\"" << prepjsonstr(text_)
+          ss << "{" << "\"uuid\":\"" << imc::escape_json_string(uuid_)
+            << "\",\"name\":\"" << imc::escape_json_string(name_)
+            << "\",\"comment\":\"" << imc::escape_json_string(comment_)
+            << "\",\"origin\":\"" << imc::escape_json_string(origin_)
+            << "\",\"origin-comment\":\"" << imc::escape_json_string(origin_comment_)
+            << "\",\"description\":\"" << imc::escape_json_string(text_)
            << "\",\"trigger-time-nt\":\"" << std::put_time(std::gmtime(&tt), "%FT%T")
            << "\",\"trigger-time\":\"" << std::put_time(std::gmtime(&att), "%FT%T")
-           << "\",\"language-code\":\"" << prepjsonstr(language_code_)
-           << "\",\"codepage\":\"" << prepjsonstr(codepage_)
-           << "\",\"yname\":\"" << prepjsonstr(yname_)
-           << "\",\"yunit\":\"" << prepjsonstr(yunit_)
+            << "\",\"language-code\":\"" << imc::escape_json_string(language_code_)
+            << "\",\"codepage\":\"" << imc::escape_json_string(codepage_)
+            << "\",\"yname\":\"" << imc::escape_json_string(yname_)
+            << "\",\"yunit\":\"" << imc::escape_json_string(yunit_)
            << "\",\"datatype\":\"" << static_cast<int>(ydatatp_)
            << "\",\"significantbits\":\"" << ysignbits_
            << "\",\"buffer-size\":\"" << ybuffer_size_
-           << "\",\"xname\":\"" << prepjsonstr(xname_)
-           << "\",\"xunit\":\"" << prepjsonstr(xunit_)
+            << "\",\"xname\":\"" << imc::escape_json_string(xname_)
+            << "\",\"xunit\":\"" << imc::escape_json_string(xunit_)
            << "\",\"xstepwidth\":\"" << xstepwidth_
            << "\",\"xoffset\":\"" << xstart_
            << "\",\"factor\":\"" << yfactor_
            << "\",\"offset\":\"" << yoffset_
            << "\",\"group\":{" << "\"index\":\"" << group_index_
-           << "\",\"name\":\"" << prepjsonstr(group_name_)
-           << "\",\"comment\":\"" << prepjsonstr(group_comment_) << "\"}";
+            << "\",\"name\":\"" << imc::escape_json_string(group_name_)
+            << "\",\"comment\":\"" << imc::escape_json_string(group_comment_) << "\"}";
 
         if ( include_data )
         {
@@ -1285,6 +1264,17 @@ namespace imc
       }
 
     public:
+      dataset() = default;
+      dataset(const dataset&) = delete;
+      dataset& operator=(const dataset&) = delete;
+      dataset(dataset&&) = delete;
+      dataset& operator=(dataset&&) = delete;
+
+      void reset()
+      {
+        clear();
+      }
+
       void parse(const unsigned char* data, size_t size)
       {
         clear();
@@ -1336,6 +1326,54 @@ namespace imc
           names.push_back(channels_.at(uuid).name_);
         }
         return names;
+      }
+
+      imc::channel get_legacy_channel(const std::string& uuid) const
+      {
+        const channel& src = get_channel(uuid);
+
+        imc::channel dst;
+        dst.uuid_ = src.uuid_;
+        dst.name_ = src.name_;
+        dst.comment_ = src.comment_;
+        dst.origin_ = src.origin_;
+        dst.origin_comment_ = src.origin_comment_;
+        dst.text_ = src.text_;
+        dst.trigger_time_ = src.trigger_time_;
+        dst.absolute_trigger_time_ = src.absolute_trigger_time_;
+        dst.language_code_ = src.language_code_;
+        dst.codepage_ = src.codepage_;
+        dst.yname_ = src.yname_;
+        dst.yunit_ = src.yunit_;
+        dst.xname_ = src.xname_;
+        dst.xunit_ = src.xunit_;
+        dst.xstepwidth_ = src.xstepwidth_;
+        dst.xstart_ = src.xstart_;
+        dst.xprec_ = src.xprec_;
+        dst.dimension_ = src.dimension_;
+        dst.xsignbits_ = src.xsignbits_;
+        dst.ysignbits_ = src.ysignbits_;
+        dst.xnum_bytes_ = static_cast<int>(imc::imc3::bytes_per_numeric_type(src.xdatatp_));
+        dst.ynum_bytes_ = static_cast<int>(imc::imc3::bytes_per_numeric_type(src.ydatatp_));
+        dst.xbuffer_offset_ = src.xbuffer_offset_;
+        dst.ybuffer_offset_ = src.ybuffer_offset_;
+        dst.xbuffer_size_ = src.xbuffer_size_;
+        dst.ybuffer_size_ = src.ybuffer_size_;
+        dst.xdatatp_ = src.xdatatp_;
+        dst.ydatatp_ = src.ydatatp_;
+        dst.xfactor_ = src.xfactor_;
+        dst.yfactor_ = src.yfactor_;
+        dst.xoffset_ = src.xoffset_;
+        dst.yoffset_ = src.yoffset_;
+        dst.number_of_samples_ = src.number_of_samples_;
+        dst.group_index_ = src.group_index_;
+        dst.group_name_ = src.group_name_;
+        dst.group_comment_ = src.group_comment_;
+        dst.set_chunk_reader([this, uuid](unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
+        {
+          return read_channel_chunk(uuid, start, count, include_x, raw_mode);
+        });
+        return dst;
       }
 
       unsigned long int get_channel_length(const std::string& uuid) const
