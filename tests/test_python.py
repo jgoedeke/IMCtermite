@@ -9,75 +9,37 @@ import tempfile
 import csv
 import struct
 import numpy as np
-from pathlib import Path
+
+from tests.assertions import (
+    assert_numeric_scaled_matches_raw,
+    assert_tsa_channel_metadata,
+    assert_tsa_texts_and_timestamps,
+    assert_uniform_numeric_x_axis,
+)
+from tests.sample_manifest import (
+    DATASET_A_DIR as DATASET_A,
+    DATASET_B_DIR as DATASET_B,
+    IMC3_DIR,
+    IMC3_METADATA_SAMPLES,
+    IMC3_PARITY_SAMPLES,
+    KNOWN_VALUE_CASES,
+    NUMERIC_INVARIANT_SAMPLE_PATHS,
+    SANITIZED_IMC3_DATA_SAMPLES,
+    SANITIZED_IMC3_SAMPLES,
+    SANITIZED_SINGLE_TO_BUNDLE,
+    SAMPLES_DIR,
+    SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
+    SUPPORTED_TSA_EVENT_SAMPLES,
+    TSA_DIR,
+    UNSUPPORTED_TSA_EVENT_SAMPLES,
+    require_sample,
+    iter_supported_sample_files,
+)
 
 try:
     from imctermite import ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
-
-PROJECT_ROOT = Path(__file__).parent.parent
-SAMPLES_DIR = PROJECT_ROOT / "samples"
-DATASET_A = SAMPLES_DIR / "datasetA"
-DATASET_B = SAMPLES_DIR / "datasetB"
-IMC3_DIR = SAMPLES_DIR / "imc3"
-TSA_DIR = SAMPLES_DIR / "tsa"
-SUPPORTED_TSA_EVENT_SAMPLES = [
-    ("imc2_TsaChannel.dat", 2),
-    ("imc3_TsaChannel.dat", 2),
-    ("imc2_tsa_multicluster.dat", 33),
-    ("imc3_tsa_multicluster.dat", 33),
-    ("imc2_tsa_padding_and_escaping.dat", 9),
-    ("imc3_tsa_padding_and_escaping.dat", 9),
-]
-TSA_PADDING_ESCAPED_TEXTS = [
-    "",
-    "A",
-    "AB",
-    "ABC",
-    "ABCD",
-    'comma,quote"slash\\\\',
-    "line1\\r\\nline2",
-    "tab\\tseparated",
-    "A\\x00B",
-]
-TSA_MULTICLUSTER_TIMESTAMPS = np.concatenate(
-    [np.array([0.0, 0.01]), np.array([0.02 + i * 0.01 for i in range(1, 31)]), np.array([0.4])]
-)
-UNSUPPORTED_TSA_EVENT_SAMPLES = [
-    ("imc2_event_numeric_many_small_events.dat", r"unknown critical key: Cv1"),
-    ("imc2_event_numeric_varied_metadata.dat", r"unknown critical key: Cv1"),
-    ("imc2_mixed_numeric_and_event_channel.dat", r"unknown critical key: Cv1"),
-    (
-        "imc3_event_numeric_many_small_events.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-    (
-        "imc3_event_numeric_varied_metadata.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-    (
-        "imc3_mixed_numeric_and_event_channel.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-]
-SANITIZED_IMC3_SAMPLES = [
-    ("imc3_sanitized_01.raw", 1),
-    ("imc3_sanitized_02.raw", 1),
-    ("imc3_sanitized_03.raw", 1),
-    ("imc3_sanitized_04.raw", 1),
-    ("imc3_sanitized_05.raw", 1),
-    ("imc3_sanitized_06.raw", 1),
-    ("imc3_sanitized_bundle.dat", 6),
-]
-SANITIZED_SINGLE_TO_BUNDLE = [
-    ("imc3_sanitized_01.raw", 0),
-    ("imc3_sanitized_02.raw", 1),
-    ("imc3_sanitized_03.raw", 2),
-    ("imc3_sanitized_04.raw", 3),
-    ("imc3_sanitized_05.raw", 4),
-    ("imc3_sanitized_06.raw", 5),
-]
 
 
 class TestModuleImport:
@@ -89,9 +51,7 @@ class TestModuleImport:
     
     def test_can_instantiate(self):
         """Should create instance with valid file"""
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
         
         imc = ImcTermite(str(sample_file).encode())
         assert imc is not None
@@ -103,9 +63,7 @@ class TestChannelListing:
     @pytest.fixture
     def imc_instance(self):
         """Create IMC instance with sample file"""
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
         return ImcTermite(str(sample_file).encode())
     
     def test_get_channel_list(self, imc_instance):
@@ -141,9 +99,7 @@ class TestChannelListing:
 
     def test_imc2_multichannel_order_matches_file_order(self):
         """IMC2 get_channels should preserve source-file channel order."""
-        sample_file = SAMPLES_DIR / "exampleB.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(SAMPLES_DIR / "exampleB.raw")
 
         imc = ImcTermite(str(sample_file).encode())
         channels = imc.get_channels(include_data=False)
@@ -158,9 +114,7 @@ class TestDataIntegrity:
     @pytest.fixture
     def sample_data(self):
         """Load sample file and extract data"""
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
         
         imc = ImcTermite(str(sample_file).encode())
         return imc.get_channels(include_data=True)
@@ -187,20 +141,12 @@ class TestIMC3Support:
 
     @pytest.mark.parametrize(
         "imc2_name,imc3_name",
-        [
-            ("sampleA.raw", "imc3_sampleA.dat"),
-            ("sampleB.raw", "imc3_sampleB.dat"),
-            ("XY_dataset_example.dat", "imc3_XY_dataset_example.dat"),
-        ],
+        IMC3_PARITY_SAMPLES,
     )
     def test_imc3_samples_match_imc2_integrity(self, imc2_name, imc3_name):
         """Paired IMC2 and IMC3 fixtures should expose the same numeric content."""
-        imc2_sample = SAMPLES_DIR / imc2_name
-        imc3_sample = IMC3_DIR / imc3_name
-        if not imc2_sample.exists():
-            pytest.skip(f"Sample file not found: {imc2_sample}")
-        if not imc3_sample.exists():
-            pytest.skip(f"Sample file not found: {imc3_sample}")
+        imc2_sample = require_sample(SAMPLES_DIR / imc2_name)
+        imc3_sample = require_sample(IMC3_DIR / imc3_name)
 
         imc2 = ImcTermite(str(imc2_sample).encode())
         imc3 = ImcTermite(str(imc3_sample).encode())
@@ -227,16 +173,10 @@ class TestIMC3Support:
 
     @pytest.mark.parametrize(
         "sample_name,expected_names",
-        [
-            ("imc3_single-channel.dat", ["AmplitudeSpectrum"]),
-            ("imc3_multi-channel.dat", ["x", "y", "z"]),
-            ("imc3_xy_dataset.dat", ["circle"]),
-        ],
+        IMC3_METADATA_SAMPLES,
     )
     def test_imc3_metadata_listing(self, sample_name, expected_names):
-        sample = IMC3_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channels = imc.get_channels(include_data=False)
@@ -244,9 +184,7 @@ class TestIMC3Support:
         assert [channel["name"] for channel in channels] == expected_names
 
     def test_imc3_include_data_extracts_xy_values(self):
-        sample = IMC3_DIR / "imc3_xy_dataset.dat"
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / "imc3_xy_dataset.dat")
 
         imc = ImcTermite(str(sample).encode())
         channels = imc.get_channels(include_data=True)
@@ -270,9 +208,7 @@ class TestIMC3Support:
 
     @pytest.mark.parametrize("sample_name,expected_channel_count", SANITIZED_IMC3_SAMPLES)
     def test_sanitized_imc3_metadata_listing(self, sample_name, expected_channel_count):
-        sample = IMC3_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channels = imc.get_channels(include_data=False)
@@ -280,11 +216,9 @@ class TestIMC3Support:
         assert len(channels) == expected_channel_count
         assert all(imc.get_channel_length(channel["uuid"]) == 148836 for channel in channels)
 
-    @pytest.mark.parametrize("sample_name", ["imc3_sanitized_bundle.dat", "imc3_sanitized_02.raw"])
+    @pytest.mark.parametrize("sample_name", SANITIZED_IMC3_DATA_SAMPLES)
     def test_sanitized_imc3_channel_data_extracts_samples(self, sample_name):
-        sample = IMC3_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channel = imc.get_channels(include_data=False)[0]
@@ -296,12 +230,8 @@ class TestIMC3Support:
 
     @pytest.mark.parametrize("single_name,bundle_index", SANITIZED_SINGLE_TO_BUNDLE)
     def test_sanitized_single_channels_match_bundle(self, single_name, bundle_index):
-        single_sample = IMC3_DIR / single_name
-        bundle_sample = IMC3_DIR / "imc3_sanitized_bundle.dat"
-        if not single_sample.exists():
-            pytest.skip(f"Sample file not found: {single_sample}")
-        if not bundle_sample.exists():
-            pytest.skip(f"Sample file not found: {bundle_sample}")
+        single_sample = require_sample(IMC3_DIR / single_name)
+        bundle_sample = require_sample(IMC3_DIR / "imc3_sanitized_bundle.dat")
 
         single = ImcTermite(str(single_sample).encode())
         bundle = ImcTermite(str(bundle_sample).encode())
@@ -333,29 +263,17 @@ class TestTSASupport:
 
     @pytest.mark.parametrize("sample_name,expected_length", SUPPORTED_TSA_EVENT_SAMPLES)
     def test_tsa_metadata_listing(self, sample_name, expected_length):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channels = imc.get_channels(include_data=False)
 
         assert len(channels) == 1
-        channel = channels[0]
-        assert channel["channel_type"] == "event"
-        assert channel["datatype"] == "10"
-        assert channel["name"] == "TsaChannel"
-        assert channel["xname"] == "time"
-        assert channel["xunit"] == "s"
-        assert imc.get_channel_length(channel["uuid"]) == expected_length
+        assert_tsa_channel_metadata(imc, channels[0], expected_length)
 
     def test_tsa_imc2_and_imc3_match(self):
-        imc2_sample = TSA_DIR / "imc2_TsaChannel.dat"
-        imc3_sample = TSA_DIR / "imc3_TsaChannel.dat"
-        if not imc2_sample.exists():
-            pytest.skip(f"Sample file not found: {imc2_sample}")
-        if not imc3_sample.exists():
-            pytest.skip(f"Sample file not found: {imc3_sample}")
+        imc2_sample = require_sample(TSA_DIR / "imc2_TsaChannel.dat")
+        imc3_sample = require_sample(TSA_DIR / "imc3_TsaChannel.dat")
 
         imc2_channel = ImcTermite(str(imc2_sample).encode()).get_channels(include_data=True)[0]
         imc3_channel = ImcTermite(str(imc3_sample).encode()).get_channels(include_data=True)[0]
@@ -365,40 +283,20 @@ class TestTSASupport:
         assert imc2_channel["textdata"] == imc3_channel["textdata"] == ["hello", "0123456789"]
         np.testing.assert_allclose(imc2_channel["xdata"], imc3_channel["xdata"], rtol=1e-9, atol=1e-9)
 
-    @pytest.mark.parametrize("sample_name", [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES])
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_data_returns_timestamp_and_text(self, sample_name):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channel = imc.get_channels(include_data=False)[0]
         data = imc.get_channel_data(channel["uuid"], include_x=True)
 
         assert list(data.keys()) == ["text", "x"]
-        if sample_name.endswith("TsaChannel.dat"):
-            assert data["text"] == ["hello", "0123456789"]
-            np.testing.assert_allclose(data["x"], np.array([20.0, 40.0]), rtol=1e-9, atol=1e-9)
-        elif "multicluster" in sample_name:
-            assert len(data["text"]) == 33
-            assert data["text"][0] == ""
-            assert data["text"][1] == "short"
-            assert data["text"][-1] == data["text"][2] * 3
-            np.testing.assert_allclose(data["x"][[0, 1, 2, -1]], np.array([0.0, 0.01, 0.03, 0.4]), rtol=1e-9, atol=1e-9)
-        else:
-            assert data["text"] == TSA_PADDING_ESCAPED_TEXTS
-            np.testing.assert_allclose(
-                data["x"],
-                np.array([0.0, 0.0, 0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.013]),
-                rtol=1e-9,
-                atol=1e-9,
-            )
+        assert_tsa_texts_and_timestamps(sample_name, data["text"], data["x"])
 
-    @pytest.mark.parametrize("sample_name", [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES])
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_events_returns_event_native_shape(self, sample_name):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channel = imc.get_channels(include_data=False)[0]
@@ -406,40 +304,17 @@ class TestTSASupport:
 
         assert list(events.keys()) == ["texts", "timestamps"]
         assert len(events["texts"]) == len(events["timestamps"])
-
-        if sample_name.endswith("TsaChannel.dat"):
-            assert events["texts"] == ["hello", "0123456789"]
-            np.testing.assert_allclose(events["timestamps"], np.array([20.0, 40.0]), rtol=1e-9, atol=1e-9)
-        elif "multicluster" in sample_name:
-            assert events["texts"][0] == ""
-            assert events["texts"][1] == "short"
-            assert all(text == events["texts"][2] for text in events["texts"][2:-1])
-            assert events["texts"][-1] == events["texts"][2] * 3
-            np.testing.assert_allclose(
-                events["timestamps"], TSA_MULTICLUSTER_TIMESTAMPS, rtol=1e-9, atol=1e-9
-            )
-        else:
-            assert events["texts"] == TSA_PADDING_ESCAPED_TEXTS
-            np.testing.assert_allclose(
-                events["timestamps"],
-                np.array([0.0, 0.0, 0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.013]),
-                rtol=1e-9,
-                atol=1e-9,
-            )
+        assert_tsa_texts_and_timestamps(sample_name, events["texts"], events["timestamps"])
 
     @pytest.mark.parametrize("sample_name,error_pattern", UNSUPPORTED_TSA_EVENT_SAMPLES)
     def test_new_event_samples_report_currently_unsupported_modes(self, sample_name, error_pattern):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         with pytest.raises(RuntimeError, match=error_pattern):
             ImcTermite(str(sample).encode())
 
     def test_get_channel_events_rejects_numeric_channels(self):
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
 
         imc = ImcTermite(str(sample_file).encode())
         channel = imc.get_channels(include_data=False)[0]
@@ -449,9 +324,7 @@ class TestTSASupport:
 
     @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
     def test_tsa_print_channel_writes_timestamp_and_text(self, sample_name, tmp_path):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         imc = ImcTermite(str(sample).encode())
         channel = imc.get_channels(include_data=False)[0]
@@ -580,8 +453,7 @@ class TestChunkedNumpy:
         """Verify chunked iteration against get_channels for all samples"""
         
         # Get all .raw and .dat files recursively
-        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
-                           list(SAMPLES_DIR.glob("**/*.dat")))
+        raw_files = iter_supported_sample_files()
         
         for raw_file in raw_files:
             # print(f"Testing {raw_file.name}")
@@ -656,8 +528,7 @@ class TestChunkedNumpy:
 
     def test_datatype11_scaled_matches_raw(self):
         """Datatype 11 (digital) must not apply CR scaling in scaled mode."""
-        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) +
-                           list(SAMPLES_DIR.glob("**/*.dat")))
+        raw_files = iter_supported_sample_files()
 
         checked = 0
         for raw_file in raw_files:
@@ -685,8 +556,7 @@ class TestChunkedNumpy:
 
     def test_nondigital_scaled_matches_raw_with_metadata_transform(self):
         """Non-digital channels should keep scaled = raw * factor + offset behavior."""
-        raw_files = sorted(list(SAMPLES_DIR.glob("**/*.raw")) +
-                           list(SAMPLES_DIR.glob("**/*.dat")))
+        raw_files = iter_supported_sample_files()
 
         checked = 0
         for raw_file in raw_files:
@@ -801,15 +671,7 @@ class TestMultipleFiles:
     
     def test_process_all_sample_files(self):
         """Should process all .raw and .dat files in samples directory (metadata only)"""
-        if not SAMPLES_DIR.exists():
-            pytest.skip(f"Samples directory not found: {SAMPLES_DIR}")
-        
-        # Get all .raw and .dat files recursively
-        files_to_test = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
-                               list(SAMPLES_DIR.glob("**/*.dat")))
-        
-        if len(files_to_test) == 0:
-            pytest.skip("No .raw or .dat files in samples directory")
+        files_to_test = iter_supported_sample_files()
         
         successful = 0
         failed = []
@@ -827,15 +689,7 @@ class TestMultipleFiles:
     
     def test_extract_all_sample_files_with_data(self):
         """Should fully extract all .raw and .dat files with data"""
-        if not SAMPLES_DIR.exists():
-            pytest.skip(f"Samples directory not found: {SAMPLES_DIR}")
-        
-        # Get all .raw and .dat files recursively
-        files_to_test = sorted(list(SAMPLES_DIR.glob("**/*.raw")) + 
-                               list(SAMPLES_DIR.glob("**/*.dat")))
-        
-        if len(files_to_test) == 0:
-            pytest.skip("No .raw or .dat files in samples directory")
+        files_to_test = iter_supported_sample_files()
         
         successful = 0
         failed = []
@@ -869,11 +723,8 @@ class TestMultipleFiles:
     
     def test_reload_different_file(self):
         """Should be able to load different files sequentially"""
-        file1 = DATASET_A / "datasetA_1.raw"
-        file2 = DATASET_A / "datasetA_2.raw"
-        
-        if not (file1.exists() and file2.exists()):
-            pytest.skip("Need at least 2 sample files")
+        file1 = require_sample(DATASET_A / "datasetA_1.raw")
+        file2 = require_sample(DATASET_A / "datasetA_2.raw")
         
         # Load first file
         imc1 = ImcTermite(str(file1).encode())
@@ -891,51 +742,10 @@ class TestMultipleFiles:
 class TestDataRegression:
     """Test specific known values to catch parsing regressions"""
     
-    @pytest.mark.parametrize("file_path,expected", [
-        # datasetA_1.raw - Standard .raw format with gravity unit
-        ("datasetA/datasetA_1.raw", {
-            'num_channels': 1,
-            'data_length': 6000,
-            'yunit': 'G',
-            'xstepwidth': 0.005,
-            'ydata_first': [0.010029276, 0.015780726],
-            'ydata_last': [-0.02981583, -0.030068753],  # [-2], [-1]
-            'xdata_first': [416.01],
-        }),
-        # sampleA.raw - Pressure data with mbar units
-        ("sampleA.raw", {
-            'num_channels': 1,
-            'data_length': 2402,
-            'yunit': '"mbar"',
-            'xoffset': 2044.03,
-            'ydata_first': [956.013793945, 955.484924316, 955.487670898],
-            'ydata_last': [866.840881348, 866.91619873, 866.985290527],  # [-3], [-2], [-1]
-        }),
-        # sample_x_precision.raw - Regression test for x-axis precision with offset
-        ("sample_x_precision.raw", {
-            'num_channels': 1,
-            'data_length': 33596,
-            'xstepwidth': 0.01,
-            'xoffset': 0.005,
-            'xdata_first': [0.005, 0.015, 0.025],
-            'ydata_first': [0.0, 0.0, 0.0],
-            'ydata_last': [0.0, 0.0, 0.0],
-        }),
-        # XY_dataset_example.dat - Different .dat format with explicit X-Y data
-        ("XY_dataset_example.dat", {
-            'num_channels': 1,
-            'data_length': 13094,
-            'ydata_first': [0, 0, 0],
-            'ydata_last': [2796202, 2796202, 2982616],  # [-3], [-2], [-1]
-            'xdata_first': [67.855759, 67.880796],
-            'xdata_last': [395.158317],
-        }),
-    ])
+    @pytest.mark.parametrize("file_path,expected", KNOWN_VALUE_CASES)
     def test_known_values(self, file_path, expected):
         """Verify known values from sample files to catch parsing regressions"""
-        sample_file = SAMPLES_DIR / file_path
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(SAMPLES_DIR / file_path)
         
         imc = ImcTermite(str(sample_file).encode())
         channels = imc.get_channels(include_data=True)
@@ -998,6 +808,28 @@ class TestDataRegression:
                 assert abs(xdata[idx] - expected_val) < tolerance, \
                     f"xdata[{idx}] should be {expected_val}"
 
+    @pytest.mark.parametrize("file_path", NUMERIC_INVARIANT_SAMPLE_PATHS)
+    def test_uniform_numeric_xdata_matches_metadata_reconstruction(self, file_path):
+        sample_file = require_sample(SAMPLES_DIR / file_path)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=True)[0]
+        indices = [0, 1, 2, len(channel["xdata"]) - 1]
+
+        assert_uniform_numeric_x_axis(channel, channel["xdata"], indices)
+
+    @pytest.mark.parametrize("file_path", NUMERIC_INVARIANT_SAMPLE_PATHS)
+    def test_numeric_scaled_values_match_raw_values_and_metadata_transform(self, file_path):
+        sample_file = require_sample(SAMPLES_DIR / file_path)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        scaled = imc.get_channel_data(channel["uuid"], include_x=False, mode="scaled")
+        raw = imc.get_channel_data(channel["uuid"], include_x=False, mode="raw")
+        indices = [0, 1, 2, len(scaled["y"]) - 1]
+
+        assert_numeric_scaled_matches_raw(channel, scaled["y"], raw["y"], indices)
+
 
 class TestErrorHandling:
     """Test error conditions"""
@@ -1009,9 +841,7 @@ class TestErrorHandling:
     
     def test_invalid_channel_name(self):
         """Should handle invalid channel name gracefully"""
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
         
         imc = ImcTermite(str(sample_file).encode())
         

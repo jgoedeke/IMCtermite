@@ -11,17 +11,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.sample_manifest import (
+    DATASET_A_DIR,
+    IMC3_DIR,
+    PROJECT_ROOT,
+    require_sample,
+    SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
+    TSA_DIR,
+)
+
 try:
     from imctermite import ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
-
-PROJECT_ROOT = Path(__file__).parent.parent
-SAMPLES_DIR = PROJECT_ROOT / "samples"
-DATASET_A_DIR = SAMPLES_DIR / "datasetA"
-IMC3_DIR = SAMPLES_DIR / "imc3"
-TSA_DIR = SAMPLES_DIR / "tsa"
-
 
 def _compile_cpp_probe(source_path: Path, binary_path: Path) -> None:
     compiler = shutil.which("g++")
@@ -51,9 +53,7 @@ class TestCppFacade:
 
     def test_imc2_get_channel_matches_python_eager_load(self, tmp_path):
         """The legacy C++ get_channel facade should preserve IMC2 eager-load behavior."""
-        sample = DATASET_A_DIR / "datasetA_1.raw"
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(DATASET_A_DIR / "datasetA_1.raw")
 
         python_channel = ImcTermite(str(sample).encode()).get_channels(include_data=True)[0]
 
@@ -98,9 +98,7 @@ int main(int argc, char** argv)
 
     def test_imc3_get_channel_adapter_matches_python_eager_load(self, tmp_path):
         """The legacy C++ get_channel adapter should load IMC3 data through the dataset path."""
-        sample = IMC3_DIR / "imc3_sampleA.dat"
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / "imc3_sampleA.dat")
 
         python_channel = ImcTermite(str(sample).encode()).get_channels(include_data=True)[0]
 
@@ -143,11 +141,9 @@ int main(int argc, char** argv)
         np.testing.assert_allclose(cpp_channel["xdata"], python_channel["xdata"], rtol=1e-9, atol=1e-9)
         np.testing.assert_allclose(cpp_channel["ydata"], python_channel["ydata"], rtol=1e-9, atol=1e-9)
 
-    @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_get_channel_adapter_matches_python_eager_load(self, sample_name, tmp_path):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         python_channel = ImcTermite(str(sample).encode()).get_channels(include_data=True)[0]
 
@@ -190,11 +186,9 @@ int main(int argc, char** argv)
         assert cpp_channel["textdata"] == python_channel["textdata"]
         np.testing.assert_allclose(cpp_channel["xdata"], python_channel["xdata"], rtol=1e-9, atol=1e-9)
 
-    @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_get_channel_events_matches_python(self, sample_name, tmp_path):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         python_channel = ImcTermite(str(sample).encode())
         python_metadata = python_channel.get_channels(include_data=False)[0]
@@ -249,11 +243,9 @@ int main(int argc, char** argv)
         assert cpp_events["texts"] == python_events["texts"]
         np.testing.assert_allclose(cpp_events["timestamps"], python_events["timestamps"], rtol=1e-9, atol=1e-9)
 
-    @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_read_channel_event_chunk_matches_python(self, sample_name, tmp_path):
-        sample = TSA_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(TSA_DIR / sample_name)
 
         python_channel = ImcTermite(str(sample).encode())
         python_metadata = python_channel.get_channels(include_data=False)[0]
