@@ -28,8 +28,8 @@ Python module to integrate IMC measurement files into any ETL workflow.
 
 ## Supported formats
 
-- _IMC2_ marker-based files, typically stored as _.raw_ or _.dat_. Reference: [docs/imc2-format.md](docs/imc2-format.md)
-- _IMC3_ files, including bundled and single-channel variants stored as _.dat_ or _.raw_. Reference: [docs/imc3-format.md](docs/imc3-format.md)
+- _IMC2_ marker-based files. Reference: [docs/imc2-format.md](docs/imc2-format.md)
+- _IMC3_ files, including bundled and single-channel variants. Reference: [docs/imc3-format.md](docs/imc3-format.md)
 
 ## Overview
 

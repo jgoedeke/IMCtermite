@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 
-from imctermite._native cimport cppimctermite, channel_chunk
+from imctermite._native cimport cppimctermite, channel_chunk, channel_event_chunk, channel_events
 
 cimport numpy as cnp
 import numpy as np
@@ -64,12 +64,17 @@ cdef class imctermite:
     return self.cppimc.get_channel_length(_as_bytes(channeluuid))
 
   def iter_channel_numpy(self, channeluuid, bool include_x=True, unsigned long int chunk_rows=1000000, str mode="scaled", unsigned long int start_index=0):
-    cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
+    cdef bytes channel_uuid = _as_bytes(channeluuid)
+    cdef int numeric_type = self.cppimc.get_channel_numeric_type(channel_uuid)
+    cdef unsigned long int total_len = self.cppimc.get_channel_length(channel_uuid)
     cdef unsigned long int start = start_index
     cdef channel_chunk chunk
     cdef cnp.ndarray x_arr
     cdef cnp.ndarray y_arr
     cdef bool raw_mode = (mode == "raw")
+
+    if numeric_type == 10:
+      raise RuntimeError("TSA event streaming via iter_channel_numpy is not implemented; use iter_channel_events() or get_channel_events() instead")
     
     # Map imc::numtype to numpy dtype
     # Types 9 (imc_devices_transitional_recording) and 10 (timestamp_ascii) 
@@ -90,42 +95,52 @@ cdef class imctermite:
     }
 
     while start < total_len:
-        chunk = self.cppimc.read_channel_chunk(_as_bytes(channeluuid), start, chunk_rows, include_x, raw_mode)
-        
-        # Create numpy arrays from bytes
-        y_dtype = dtype_map.get(chunk.y_type, np.float64)
-        
-        y_arr = np.empty(chunk.count, dtype=y_dtype)
-             
-        if chunk.y_bytes.size() > 0:
-            memcpy(<void*> cnp.PyArray_DATA(y_arr), 
-                   <void*> chunk.y_bytes.data(), 
-                   chunk.y_bytes.size())
-        
-        result = {
-            "start": chunk.start,
-            "y": y_arr
-        }
-        
-        if include_x:
-            x_dtype = dtype_map.get(chunk.x_type, np.float64)
-            x_arr = np.empty(chunk.count, dtype=x_dtype)
-            
-            if chunk.x_bytes.size() > 0:
-                memcpy(<void*> cnp.PyArray_DATA(x_arr), 
-                       <void*> chunk.x_bytes.data(), 
-                       chunk.x_bytes.size())
-            
-            result["x"] = x_arr
-            
-        yield result
-        
-        start += chunk.count
-        if chunk.count == 0:
-            break
+      chunk = self.cppimc.read_channel_chunk(channel_uuid, start, chunk_rows, include_x, raw_mode)
+
+      # Create numpy arrays from bytes
+      y_dtype = dtype_map.get(chunk.y_type, np.float64)
+
+      y_arr = np.empty(chunk.count, dtype=y_dtype)
+
+      if chunk.y_bytes.size() > 0:
+        memcpy(<void*> cnp.PyArray_DATA(y_arr), 
+             <void*> chunk.y_bytes.data(), 
+             chunk.y_bytes.size())
+
+      result = {
+        "start": chunk.start,
+        "y": y_arr
+      }
+
+      if include_x:
+        x_dtype = dtype_map.get(chunk.x_type, np.float64)
+        x_arr = np.empty(chunk.count, dtype=x_dtype)
+
+        if chunk.x_bytes.size() > 0:
+          memcpy(<void*> cnp.PyArray_DATA(x_arr), 
+               <void*> chunk.x_bytes.data(), 
+               chunk.x_bytes.size())
+
+        result["x"] = x_arr
+
+      yield result
+
+      start += chunk.count
+      if chunk.count == 0:
+        break
 
   def get_channel_data(self, channeluuid, bool include_x=True, str mode="scaled"):
-    cdef unsigned long int total_len = self.cppimc.get_channel_length(_as_bytes(channeluuid))
+    cdef bytes channel_uuid = _as_bytes(channeluuid)
+    cdef int numeric_type = self.cppimc.get_channel_numeric_type(channel_uuid)
+    cdef unsigned long int total_len = self.cppimc.get_channel_length(channel_uuid)
+
+    if numeric_type == 10:
+      events = self.get_channel_events(channeluuid, include_timestamps=include_x)
+      result = {"text": events["texts"]}
+      if include_x:
+        result["x"] = events["timestamps"]
+      return result
+
     if total_len == 0:
         res = {'y': np.array([])}
         if include_x:
@@ -133,6 +148,42 @@ cdef class imctermite:
         return res
     
     return next(self.iter_channel_numpy(channeluuid, include_x, total_len, mode, 0))
+
+  def get_channel_events(self, channeluuid, bool include_timestamps=True):
+    cdef bytes channel_uuid = _as_bytes(channeluuid)
+    cdef channel_events events = self.cppimc.get_channel_events(channel_uuid)
+    cdef list texts = [events.texts[i].decode('utf-8', errors='ignore') for i in range(events.texts.size())]
+
+    result = {"texts": texts}
+    if include_timestamps:
+      result["timestamps"] = np.asarray(events.timestamps, dtype=np.float64)
+    return result
+
+  def iter_channel_events(self, channeluuid, bool include_timestamps=True, unsigned long int chunk_rows=1000000, unsigned long int start_index=0):
+    cdef bytes channel_uuid = _as_bytes(channeluuid)
+    cdef int numeric_type = self.cppimc.get_channel_numeric_type(channel_uuid)
+    cdef unsigned long int start = start_index
+    cdef channel_event_chunk chunk
+    cdef list texts
+
+    if numeric_type != 10:
+      raise RuntimeError("channel is numeric; use iter_channel_numpy() instead")
+
+    while True:
+      chunk = self.cppimc.read_channel_event_chunk(channel_uuid, start, chunk_rows)
+      if chunk.count == 0:
+        break
+
+      texts = [chunk.texts[i].decode('utf-8', errors='ignore') for i in range(chunk.texts.size())]
+      result = {
+        "start": chunk.start,
+        "texts": texts,
+      }
+      if include_timestamps:
+        result["timestamps"] = np.asarray(chunk.timestamps, dtype=np.float64)
+
+      yield result
+      start += chunk.count
 
   # print single channel/all channels
   def print_channel(self, channeluuid, outputfile, char delimiter, unsigned long int chunk_size=100000):
@@ -148,6 +199,11 @@ cdef class imctermite:
       for chn in chnlstjn:
         fout.write('#' +str(chn['xname']).rjust(19)+str(chn['yname']).rjust(20)+'\n')
         fout.write('#'+str(chn['xunit']).rjust(19)+str(chn['yunit']).rjust(20)+'\n')
-        for n in range(0,len(chn['ydata'])):
-          fout.write(str(chn['xdata'][n]).rjust(20)+
-                     str(chn['ydata'][n]).rjust(20)+'\n')
+        if 'textdata' in chn:
+          for n in range(0,len(chn['textdata'])):
+            fout.write(str(chn['xdata'][n]).rjust(20)+
+                       str(chn['textdata'][n]).rjust(20)+'\n')
+        else:
+          for n in range(0,len(chn['ydata'])):
+            fout.write(str(chn['xdata'][n]).rjust(20)+
+                       str(chn['ydata'][n]).rjust(20)+'\n')

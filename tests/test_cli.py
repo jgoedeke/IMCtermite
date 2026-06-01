@@ -6,6 +6,7 @@ End-to-end tests for IMCtermite CLI tool
 import pytest
 import subprocess
 import sys
+import csv
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -14,6 +15,15 @@ if sys.platform == "win32":
     CLI = CLI.with_suffix(".exe")
 SAMPLES_DIR = PROJECT_ROOT / "samples" / "datasetA"
 IMC3_DIR = PROJECT_ROOT / "samples" / "imc3"
+TSA_DIR = PROJECT_ROOT / "samples" / "tsa"
+SUPPORTED_TSA_EVENT_SAMPLES = [
+    "imc2_TsaChannel.dat",
+    "imc3_TsaChannel.dat",
+    "imc2_tsa_multicluster.dat",
+    "imc3_tsa_multicluster.dat",
+    "imc2_tsa_padding_and_escaping.dat",
+    "imc3_tsa_padding_and_escaping.dat",
+]
 SANITIZED_IMC3_SAMPLES = [
     ("imc3_sanitized_01.raw", 1),
     ("imc3_sanitized_02.raw", 1),
@@ -92,6 +102,25 @@ class TestCLIBasics:
 
         assert result.returncode == 0
         assert result.stdout.count("uuid:") == expected_channels
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_tsa_samples_list_channels(self, sample_name):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--listchannels"],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        assert "channel-type:       event" in result.stdout
+        assert "datatype:           10" in result.stdout
+        assert "xname:              time" in result.stdout
+        assert "TsaChannel" in result.stdout
 
 
 class TestChannelOperations:
@@ -194,6 +223,47 @@ class TestCSVOutput:
         content = first_csv.read_text()
         first_line = content.split('\n')[0]
         assert ';' in first_line, "Should use semicolon delimiter"
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_tsa_csv_output_contains_timestamp_and_text(self, sample_name, tmp_path):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        output_dir = tmp_path / "tsa_csv_output"
+        output_dir.mkdir()
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--output", str(output_dir)],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        csv_files = list(output_dir.glob("*.csv"))
+        assert len(csv_files) == 1
+        rows = list(csv.reader(csv_files[0].read_text().splitlines()))
+        assert rows[0] == ["time", "TsaChannel"]
+        if sample_name.endswith("TsaChannel.dat"):
+            assert float(rows[2][0]) == 20.0
+            assert rows[2][1] == "hello"
+            assert float(rows[3][0]) == 40.0
+            assert rows[3][1] == "0123456789"
+        elif "multicluster" in sample_name:
+            assert float(rows[2][0]) == 0.0
+            assert rows[2][1] == ""
+            assert float(rows[3][0]) == 0.01
+            assert rows[3][1] == "short"
+            assert float(rows[-1][0]) == 0.4
+            assert rows[-1][1].startswith("0123456789")
+        else:
+            assert float(rows[2][0]) == 0.0
+            assert rows[2][1] == ""
+            assert float(rows[3][0]) == 0.0
+            assert rows[3][1] == "A"
+            assert float(rows[-1][0]) == 0.013
+            assert rows[-1][1] == "A\\x00B"
 
 
 class TestMultipleFiles:

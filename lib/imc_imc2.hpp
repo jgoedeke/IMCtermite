@@ -352,6 +352,18 @@ namespace imc
         return channels_.at(uuid).read_chunk(start, count, include_x, raw_mode);
       }
 
+      std::vector<imc::tsa_event> read_channel_events(const std::string& uuid,
+                                                      unsigned long int start,
+                                                      unsigned long int count)
+      {
+        if ( !channels_.count(uuid) )
+        {
+          throw std::runtime_error(std::string("channel does not exist:") + uuid);
+        }
+
+        return channels_.at(uuid).read_tsa_events(start, count);
+      }
+
       void print_channel(const std::string& channeluuid, const std::string& outputfile,
                          const char sep, unsigned long int chunk_size = 100000)
       {

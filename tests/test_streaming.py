@@ -16,6 +16,15 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 DATASET_A = SAMPLES_DIR / "datasetA"
 IMC3_DIR = SAMPLES_DIR / "imc3"
+TSA_DIR = SAMPLES_DIR / "tsa"
+SUPPORTED_TSA_EVENT_SAMPLES = [
+    "imc2_TsaChannel.dat",
+    "imc3_TsaChannel.dat",
+    "imc2_tsa_multicluster.dat",
+    "imc3_tsa_multicluster.dat",
+    "imc2_tsa_padding_and_escaping.dat",
+    "imc3_tsa_padding_and_escaping.dat",
+]
 
 class TestStreaming:
     """Test iter_channel_numpy functionality"""
@@ -143,3 +152,62 @@ class TestStreaming:
 
         np.testing.assert_allclose(streamed_x, np.array(channel["xdata"]), rtol=1e-9, atol=1e-9)
         np.testing.assert_allclose(streamed_y, np.array(channel["ydata"]), rtol=1e-9, atol=1e-9)
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_tsa_streaming_is_rejected(self, sample_name):
+        sample_file = TSA_DIR / sample_name
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        with pytest.raises(RuntimeError, match="TSA event streaming"):
+            next(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=16))
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_iter_channel_events_matches_eager_api(self, sample_name):
+        sample_file = TSA_DIR / sample_name
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        eager = imc.get_channel_events(channel["uuid"])
+
+        streamed = list(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=1))
+
+        assert [text for chunk in streamed for text in chunk["texts"]] == eager["texts"]
+        np.testing.assert_allclose(
+            np.concatenate([chunk["timestamps"] for chunk in streamed]),
+            eager["timestamps"],
+            rtol=1e-9,
+            atol=1e-9,
+        )
+        assert [chunk["start"] for chunk in streamed] == list(range(0, len(eager["texts"]), 1))
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_iter_channel_events_can_skip_timestamps(self, sample_name):
+        sample_file = TSA_DIR / sample_name
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        chunks = list(imc.iter_channel_events(channel["uuid"], include_timestamps=False, chunk_rows=2))
+
+        assert chunks[0]["start"] == 0
+        assert [text for chunk in chunks for text in chunk["texts"]] == imc.get_channel_events(channel["uuid"])["texts"]
+        assert all("timestamps" not in chunk for chunk in chunks)
+
+    def test_iter_channel_events_rejects_numeric_channels(self):
+        sample_file = DATASET_A / "datasetA_1.raw"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        with pytest.raises(RuntimeError, match="channel is numeric"):
+            next(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=16))

@@ -21,6 +21,18 @@ class imctermite:
         include_x: bool = True,
         mode: str = "scaled"
     ) -> dict[str, Any]: ...
+    def get_channel_events(
+        self,
+        channeluuid: str | bytes,
+        include_timestamps: bool = True
+    ) -> dict[str, Any]: ...
+    def iter_channel_events(
+        self,
+        channeluuid: str | bytes,
+        include_timestamps: bool = True,
+        chunk_rows: int = 1000000,
+        start_index: int = 0
+    ) -> Iterator[dict[str, Any]]: ...
     def print_channel(
         self,
         channeluuid: str | bytes,

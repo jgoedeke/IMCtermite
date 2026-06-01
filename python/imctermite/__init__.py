@@ -17,6 +17,7 @@ import os
 import warnings
 from typing import TYPE_CHECKING, Any, Iterator, Literal, TypedDict, cast
 
+import numpy as np
 import numpy.typing as npt
 
 from . import _imctermite as _native
@@ -42,6 +43,21 @@ class ChannelNumpyChunk(TypedDict):
     x: npt.NDArray[Any]
 
 
+class ChannelEventChunk(TypedDict, total=False):
+        """One chunk returned by `ImcTermite.iter_channel_events()`.
+
+        Keys:
+        - `start`: start index of this chunk in the event channel.
+        - `texts`: decoded TSA event payload strings.
+        - `timestamps`: numpy array of decoded timestamps when
+            `include_timestamps=True`.
+        """
+
+        start: int
+        texts: list[str]
+        timestamps: npt.NDArray[np.float64]
+
+
 class ChannelNumpyData(TypedDict):
     """Return value of `ImcTermite.get_channel_data()`.
 
@@ -52,6 +68,34 @@ class ChannelNumpyData(TypedDict):
 
     y: npt.NDArray[Any]
     x: npt.NDArray[Any]
+
+
+class ChannelTsaData(TypedDict, total=False):
+    """Return value of `ImcTermite.get_channel_data()` for TSA event channels.
+
+    Keys:
+    - `text`: decoded TSA event payload strings.
+    - `x`: numpy array of decoded timestamps (when `include_x=True`).
+    """
+
+    text: list[str]
+    x: npt.NDArray[np.float64]
+
+
+class ChannelEventData(TypedDict, total=False):
+        """Return value of `ImcTermite.get_channel_events()`.
+
+        Keys:
+        - `texts`: decoded TSA event payload strings.
+        - `timestamps`: numpy array of decoded timestamps when
+            `include_timestamps=True`.
+        """
+
+        texts: list[str]
+        timestamps: npt.NDArray[np.float64]
+
+
+ChannelData = ChannelNumpyData | ChannelTsaData
 
 
 class ImcTermite:
@@ -123,6 +167,11 @@ class ImcTermite:
         Yields:
             Dicts containing at least `start` and `y` keys and optionally an `x`
             key when `include_x=True`.
+
+        Note:
+            TSA event channels are intentionally excluded from this numeric
+            streaming API in the first implementation pass and raise
+            `RuntimeError` instead.
         """
 
         return cast(
@@ -141,17 +190,79 @@ class ImcTermite:
         channeluuid: str | bytes,
         include_x: bool = True,
         mode: _Mode = "scaled",
-    ) -> ChannelNumpyData:
-        """Return the full channel data as numpy arrays.
+    ) -> ChannelData:
+        """Return the full channel data.
 
         Note:
             This loads the entire channel into memory. For large channels,
             prefer `iter_channel_numpy()`.
+
+        Returns:
+            Numeric channels return numpy `x`/`y` arrays. TSA event channels
+            return decoded `text` payloads and, when `include_x=True`, a numpy
+            `x` array with decoded timestamps.
         """
 
         return cast(
-            ChannelNumpyData,
+            ChannelData,
             self._native.get_channel_data(channeluuid, include_x=include_x, mode=mode),
+        )
+
+    def get_channel_events(
+        self,
+        channeluuid: str | bytes,
+        include_timestamps: bool = True,
+    ) -> ChannelEventData:
+        """Return TSA event payloads using an event-native shape.
+
+        Args:
+            channeluuid: Channel UUID.
+            include_timestamps: Include decoded timestamps in the result.
+
+        Returns:
+            A dict containing `texts` and, when requested, `timestamps`.
+
+        Note:
+            This method is only valid for TSA event channels and raises
+            `RuntimeError` for numeric channels.
+        """
+
+        return cast(
+            ChannelEventData,
+            self._native.get_channel_events(channeluuid, include_timestamps=include_timestamps),
+        )
+
+    def iter_channel_events(
+        self,
+        channeluuid: str | bytes,
+        include_timestamps: bool = True,
+        chunk_rows: int = 1_000_000,
+        start_index: int = 0,
+    ) -> Iterator[ChannelEventChunk]:
+        """Iterate TSA event data in chunks.
+
+        Args:
+            channeluuid: Channel UUID.
+            include_timestamps: Include decoded timestamps in the yielded chunks.
+            chunk_rows: Maximum number of events per yielded chunk.
+            start_index: Start reading at this event index.
+
+        Yields:
+            Dicts containing `start`, `texts`, and optionally `timestamps`.
+
+        Note:
+            This method is only valid for TSA event channels and raises
+            `RuntimeError` for numeric channels.
+        """
+
+        return cast(
+            Iterator[ChannelEventChunk],
+            self._native.iter_channel_events(
+                channeluuid,
+                include_timestamps=include_timestamps,
+                chunk_rows=chunk_rows,
+                start_index=start_index,
+            ),
         )
 
     def print_channel(

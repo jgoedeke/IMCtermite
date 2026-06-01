@@ -21,6 +21,46 @@ SAMPLES_DIR = PROJECT_ROOT / "samples"
 DATASET_A = SAMPLES_DIR / "datasetA"
 DATASET_B = SAMPLES_DIR / "datasetB"
 IMC3_DIR = SAMPLES_DIR / "imc3"
+TSA_DIR = SAMPLES_DIR / "tsa"
+SUPPORTED_TSA_EVENT_SAMPLES = [
+    ("imc2_TsaChannel.dat", 2),
+    ("imc3_TsaChannel.dat", 2),
+    ("imc2_tsa_multicluster.dat", 33),
+    ("imc3_tsa_multicluster.dat", 33),
+    ("imc2_tsa_padding_and_escaping.dat", 9),
+    ("imc3_tsa_padding_and_escaping.dat", 9),
+]
+TSA_PADDING_ESCAPED_TEXTS = [
+    "",
+    "A",
+    "AB",
+    "ABC",
+    "ABCD",
+    'comma,quote"slash\\\\',
+    "line1\\r\\nline2",
+    "tab\\tseparated",
+    "A\\x00B",
+]
+TSA_MULTICLUSTER_TIMESTAMPS = np.concatenate(
+    [np.array([0.0, 0.01]), np.array([0.02 + i * 0.01 for i in range(1, 31)]), np.array([0.4])]
+)
+UNSUPPORTED_TSA_EVENT_SAMPLES = [
+    ("imc2_event_numeric_many_small_events.dat", r"unknown critical key: Cv1"),
+    ("imc2_event_numeric_varied_metadata.dat", r"unknown critical key: Cv1"),
+    ("imc2_mixed_numeric_and_event_channel.dat", r"unknown critical key: Cv1"),
+    (
+        "imc3_event_numeric_many_small_events.dat",
+        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
+    ),
+    (
+        "imc3_event_numeric_varied_metadata.dat",
+        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
+    ),
+    (
+        "imc3_mixed_numeric_and_event_channel.dat",
+        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
+    ),
+]
 SANITIZED_IMC3_SAMPLES = [
     ("imc3_sanitized_01.raw", 1),
     ("imc3_sanitized_02.raw", 1),
@@ -80,9 +120,11 @@ class TestChannelListing:
         first_channel = channels[0]
         
         # Check for expected keys
-        required_keys = ['name', 'uuid']
+        required_keys = ['name', 'uuid', 'channel_type']
         for key in required_keys:
             assert key in first_channel, f"Missing key: {key}"
+
+        assert first_channel['channel_type'] == 'numeric'
     
     def test_get_channel_data(self, imc_instance):
         """Should return channel data with xdata and ydata"""
@@ -286,6 +328,144 @@ class TestIMC3Support:
         np.testing.assert_array_equal(single_raw["y"], bundle_raw["y"])
 
 
+class TestTSASupport:
+    """Regression coverage for TSA event channels in IMC2 and IMC3 containers."""
+
+    @pytest.mark.parametrize("sample_name,expected_length", SUPPORTED_TSA_EVENT_SAMPLES)
+    def test_tsa_metadata_listing(self, sample_name, expected_length):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert len(channels) == 1
+        channel = channels[0]
+        assert channel["channel_type"] == "event"
+        assert channel["datatype"] == "10"
+        assert channel["name"] == "TsaChannel"
+        assert channel["xname"] == "time"
+        assert channel["xunit"] == "s"
+        assert imc.get_channel_length(channel["uuid"]) == expected_length
+
+    def test_tsa_imc2_and_imc3_match(self):
+        imc2_sample = TSA_DIR / "imc2_TsaChannel.dat"
+        imc3_sample = TSA_DIR / "imc3_TsaChannel.dat"
+        if not imc2_sample.exists():
+            pytest.skip(f"Sample file not found: {imc2_sample}")
+        if not imc3_sample.exists():
+            pytest.skip(f"Sample file not found: {imc3_sample}")
+
+        imc2_channel = ImcTermite(str(imc2_sample).encode()).get_channels(include_data=True)[0]
+        imc3_channel = ImcTermite(str(imc3_sample).encode()).get_channels(include_data=True)[0]
+
+        assert imc2_channel["datatype"] == imc3_channel["datatype"] == "10"
+        assert imc2_channel["channel_type"] == imc3_channel["channel_type"] == "event"
+        assert imc2_channel["textdata"] == imc3_channel["textdata"] == ["hello", "0123456789"]
+        np.testing.assert_allclose(imc2_channel["xdata"], imc3_channel["xdata"], rtol=1e-9, atol=1e-9)
+
+    @pytest.mark.parametrize("sample_name", [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES])
+    def test_tsa_get_channel_data_returns_timestamp_and_text(self, sample_name):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        data = imc.get_channel_data(channel["uuid"], include_x=True)
+
+        assert list(data.keys()) == ["text", "x"]
+        if sample_name.endswith("TsaChannel.dat"):
+            assert data["text"] == ["hello", "0123456789"]
+            np.testing.assert_allclose(data["x"], np.array([20.0, 40.0]), rtol=1e-9, atol=1e-9)
+        elif "multicluster" in sample_name:
+            assert len(data["text"]) == 33
+            assert data["text"][0] == ""
+            assert data["text"][1] == "short"
+            assert data["text"][-1] == data["text"][2] * 3
+            np.testing.assert_allclose(data["x"][[0, 1, 2, -1]], np.array([0.0, 0.01, 0.03, 0.4]), rtol=1e-9, atol=1e-9)
+        else:
+            assert data["text"] == TSA_PADDING_ESCAPED_TEXTS
+            np.testing.assert_allclose(
+                data["x"],
+                np.array([0.0, 0.0, 0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.013]),
+                rtol=1e-9,
+                atol=1e-9,
+            )
+
+    @pytest.mark.parametrize("sample_name", [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES])
+    def test_tsa_get_channel_events_returns_event_native_shape(self, sample_name):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        events = imc.get_channel_events(channel["uuid"])
+
+        assert list(events.keys()) == ["texts", "timestamps"]
+        assert len(events["texts"]) == len(events["timestamps"])
+
+        if sample_name.endswith("TsaChannel.dat"):
+            assert events["texts"] == ["hello", "0123456789"]
+            np.testing.assert_allclose(events["timestamps"], np.array([20.0, 40.0]), rtol=1e-9, atol=1e-9)
+        elif "multicluster" in sample_name:
+            assert events["texts"][0] == ""
+            assert events["texts"][1] == "short"
+            assert all(text == events["texts"][2] for text in events["texts"][2:-1])
+            assert events["texts"][-1] == events["texts"][2] * 3
+            np.testing.assert_allclose(
+                events["timestamps"], TSA_MULTICLUSTER_TIMESTAMPS, rtol=1e-9, atol=1e-9
+            )
+        else:
+            assert events["texts"] == TSA_PADDING_ESCAPED_TEXTS
+            np.testing.assert_allclose(
+                events["timestamps"],
+                np.array([0.0, 0.0, 0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.013]),
+                rtol=1e-9,
+                atol=1e-9,
+            )
+
+    @pytest.mark.parametrize("sample_name,error_pattern", UNSUPPORTED_TSA_EVENT_SAMPLES)
+    def test_new_event_samples_report_currently_unsupported_modes(self, sample_name, error_pattern):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        with pytest.raises(RuntimeError, match=error_pattern):
+            ImcTermite(str(sample).encode())
+
+    def test_get_channel_events_rejects_numeric_channels(self):
+        sample_file = DATASET_A / "datasetA_1.raw"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        with pytest.raises(RuntimeError, match="channel is numeric"):
+            imc.get_channel_events(channel["uuid"])
+
+    @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
+    def test_tsa_print_channel_writes_timestamp_and_text(self, sample_name, tmp_path):
+        sample = TSA_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        output_file = tmp_path / f"{sample.stem}.csv"
+        imc.print_channel(channel["uuid"], output_file, b','[0])
+
+        rows = list(csv.reader(output_file.read_text().splitlines()))
+        assert rows[0] == ["time", "TsaChannel"]
+        assert float(rows[2][0]) == 20.0
+        assert rows[2][1] == "hello"
+        assert float(rows[3][0]) == 40.0
+        assert rows[3][1] == "0123456789"
+
+
 class TestJsonEscaping:
     """Regression tests for JSON metadata escaping."""
 
@@ -413,6 +593,10 @@ class TestChunkedNumpy:
                 
                 for ch_ref in channels_ref:
                     uuid = ch_ref['uuid'].encode('utf-8')
+                    if 'textdata' in ch_ref:
+                        with pytest.raises(RuntimeError, match="TSA event streaming"):
+                            list(imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100, mode="scaled"))
+                        continue
                     
                     # Test with include_x=True
                     y_chunks = []
@@ -511,7 +695,7 @@ class TestChunkedNumpy:
 
             for channel in channels:
                 datatype = str(channel.get('datatype'))
-                if datatype == '11':
+                if datatype in {'10', '11'}:
                     continue
 
                 try:
@@ -666,7 +850,8 @@ class TestMultipleFiles:
                     has_data = False
                     for channel in channels:
                         if ('xdata' in channel and len(channel['xdata']) > 0) or \
-                           ('ydata' in channel and len(channel['ydata']) > 0):
+                                    ('ydata' in channel and len(channel['ydata']) > 0) or \
+                                    ('textdata' in channel and len(channel['textdata']) > 0):
                             has_data = True
                             break
                     
