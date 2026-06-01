@@ -106,7 +106,8 @@ class TestChannelListing:
         imc = ImcTermite(str(sample_file).encode())
         channels = imc.get_channels(include_data=False)
 
-        assert [channel['uuid'] for channel in channels] == ['377', '707', '1038']
+        assert [channel['group']['name'] for channel in channels] == ['kanal1', 'kanal2', 'E06_6_121']
+        assert [int(channel['uuid']) for channel in channels] == sorted(int(channel['uuid']) for channel in channels)
 
 
 class TestDataIntegrity:
