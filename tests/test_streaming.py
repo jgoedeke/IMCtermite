@@ -6,7 +6,11 @@ Tests for the new streaming/chunking functionality in IMCtermite
 import pytest
 import numpy as np
 
-from tests.assertions import assert_event_chunks_match_eager, assert_streamed_numeric_matches_eager
+from tests.assertions import (
+    assert_chunk_start_progression,
+    assert_event_chunks_match_eager,
+    assert_streamed_numeric_matches_eager,
+)
 from tests.sample_manifest import (
     DATASET_A_DIR as DATASET_A,
     IMC3_DIR,
@@ -106,11 +110,7 @@ class TestStreaming:
 
     def test_invalid_channel_uuid(self, imc_instance):
         """Test behavior with invalid UUID"""
-        # Depending on implementation, this might raise an error or return empty generator
-        # Based on C++ code: throw std::runtime_error("channel does not exist:" + uuid);
-        # Cython should propagate this as RuntimeError
-        
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="channel does not exist:non-existent-uuid"):
             list(imc_instance.iter_channel_numpy(b"non-existent-uuid"))
 
     def test_imc3_xy_streaming_matches_full_load(self):
@@ -144,14 +144,15 @@ class TestStreaming:
             next(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=16))
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
-    def test_iter_channel_events_matches_eager_api(self, sample_name):
+    @pytest.mark.parametrize("chunk_rows", [1, 4])
+    def test_iter_channel_events_matches_eager_api(self, sample_name, chunk_rows):
         sample_file = require_sample(TSA_DIR / sample_name)
 
         imc = ImcTermite(str(sample_file).encode())
         channel = imc.get_channels(include_data=False)[0]
         eager = imc.get_channel_events(channel["uuid"])
 
-        streamed = list(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=1))
+        streamed = list(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=chunk_rows))
         assert_event_chunks_match_eager(streamed, eager)
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
@@ -163,7 +164,7 @@ class TestStreaming:
 
         chunks = list(imc.iter_channel_events(channel["uuid"], include_timestamps=False, chunk_rows=2))
 
-        assert chunks[0]["start"] == 0
+        assert_chunk_start_progression(chunks, "texts")
         assert [text for chunk in chunks for text in chunk["texts"]] == imc.get_channel_events(channel["uuid"])["texts"]
         assert all("timestamps" not in chunk for chunk in chunks)
 

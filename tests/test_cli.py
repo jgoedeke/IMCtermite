@@ -9,6 +9,7 @@ import csv
 
 from tests.assertions import assert_tsa_csv_rows
 from tests.sample_manifest import (
+    BASIC_SAMPLE_INFO_CASES,
     CLI_PATH,
     IMC3_DIR,
     require_sample,
@@ -21,6 +22,53 @@ from tests.sample_manifest import (
 
 CLI = CLI_PATH
 DATASET_A_DIR = SAMPLES_DIR / "datasetA"
+
+
+def parse_listchannels_output(output: str) -> list[dict[str, str]]:
+    channels = []
+    current = {}
+
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            if current:
+                channels.append(current)
+                current = {}
+            continue
+
+        if ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        current[key.strip()] = value.strip()
+
+    if current:
+        channels.append(current)
+
+    return channels
+
+
+def get_cli_group_name(channel: dict[str, str]) -> str:
+    group = channel.get("group", "")
+    if not (group.startswith("(") and group.endswith(")")):
+        return ""
+
+    parts = group[1:-1].split(",", 2)
+    if len(parts) < 2:
+        return ""
+
+    return parts[1]
+
+
+def assert_cli_basic_sample_info(output: str, expected: dict) -> None:
+    channels = parse_listchannels_output(output)
+    assert len(channels) == expected["num_channels"]
+    assert [channel.get("channel-type") for channel in channels] == expected["channel_types"]
+    assert [channel.get("datatype") for channel in channels] == expected["datatypes"]
+    if "channel_names" in expected:
+        assert [channel.get("name") for channel in channels] == expected["channel_names"]
+    if "group_names" in expected:
+        assert [get_cli_group_name(channel) for channel in channels] == expected["group_names"]
 
 
 class TestCLIBasics:
@@ -239,6 +287,14 @@ class TestMultipleFiles:
             )
             if result.returncode != 0:
                 failed.append(f"{sample.relative_to(samples_root)}: exit code {result.returncode}")
+                continue
+
+            try:
+                relative_path = sample.relative_to(samples_root).as_posix()
+                expected = BASIC_SAMPLE_INFO_CASES[relative_path]
+                assert_cli_basic_sample_info(result.stdout, expected)
+            except Exception as exc:
+                failed.append(f"{sample.relative_to(samples_root)}: {exc}")
         
         assert len(failed) == 0, f"Failed to process {len(failed)}/{len(samples)} files: {failed}"
     

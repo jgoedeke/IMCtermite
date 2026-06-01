@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.assertions import assert_exact_allclose
 from tests.sample_manifest import (
     DATASET_A_DIR,
     IMC3_DIR,
@@ -93,8 +94,8 @@ int main(int argc, char** argv)
 
         assert cpp_channel["uuid"] == python_channel["uuid"]
         assert cpp_channel["datatype"] == python_channel["datatype"]
-        np.testing.assert_allclose(cpp_channel["xdata"], python_channel["xdata"], rtol=1e-9, atol=1e-9)
-        np.testing.assert_allclose(cpp_channel["ydata"], python_channel["ydata"], rtol=1e-9, atol=1e-9)
+        assert_exact_allclose(cpp_channel["xdata"], python_channel["xdata"])
+        assert_exact_allclose(cpp_channel["ydata"], python_channel["ydata"])
 
     def test_imc3_get_channel_adapter_matches_python_eager_load(self, tmp_path):
         """The legacy C++ get_channel adapter should load IMC3 data through the dataset path."""
@@ -138,8 +139,8 @@ int main(int argc, char** argv)
 
         assert cpp_channel["uuid"] == python_channel["uuid"]
         assert cpp_channel["datatype"] == python_channel["datatype"]
-        np.testing.assert_allclose(cpp_channel["xdata"], python_channel["xdata"], rtol=1e-9, atol=1e-9)
-        np.testing.assert_allclose(cpp_channel["ydata"], python_channel["ydata"], rtol=1e-9, atol=1e-9)
+        assert_exact_allclose(cpp_channel["xdata"], python_channel["xdata"])
+        assert_exact_allclose(cpp_channel["ydata"], python_channel["ydata"])
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_get_channel_adapter_matches_python_eager_load(self, sample_name, tmp_path):
@@ -184,7 +185,7 @@ int main(int argc, char** argv)
         assert cpp_channel["uuid"] == python_channel["uuid"]
         assert cpp_channel["datatype"] == python_channel["datatype"] == "10"
         assert cpp_channel["textdata"] == python_channel["textdata"]
-        np.testing.assert_allclose(cpp_channel["xdata"], python_channel["xdata"], rtol=1e-9, atol=1e-9)
+        assert_exact_allclose(cpp_channel["xdata"], python_channel["xdata"])
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_get_channel_events_matches_python(self, sample_name, tmp_path):
@@ -241,7 +242,7 @@ int main(int argc, char** argv)
         cpp_events = json.loads(run_result.stdout[run_result.stdout.find("{"):])
 
         assert cpp_events["texts"] == python_events["texts"]
-        np.testing.assert_allclose(cpp_events["timestamps"], python_events["timestamps"], rtol=1e-9, atol=1e-9)
+        assert_exact_allclose(cpp_events["timestamps"], python_events["timestamps"])
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES[:2])
     def test_tsa_read_channel_event_chunk_matches_python(self, sample_name, tmp_path):
@@ -300,4 +301,4 @@ int main(int argc, char** argv)
         assert cpp_chunk["start"] == python_chunks[1]["start"] == 1
         assert cpp_chunk["count"] == 1
         assert cpp_chunk["texts"] == python_chunks[1]["texts"]
-        np.testing.assert_allclose(cpp_chunk["timestamps"], python_chunks[1]["timestamps"], rtol=1e-9, atol=1e-9)
+        assert_exact_allclose(cpp_chunk["timestamps"], python_chunks[1]["timestamps"])
