@@ -2,6 +2,12 @@
 
 End-to-end tests for both the CLI tool and Python module.
 
+Current split:
+- `test_cli.py` covers the CLI executable behavior.
+- `test_python.py` covers the Python wrapper API and data regressions.
+- `test_streaming.py` covers chunked/streaming API behavior.
+- `test_cpp.py` covers native C++ facade regressions via compiled probes.
+
 
 ## Running Tests
 

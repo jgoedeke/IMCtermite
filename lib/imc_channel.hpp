@@ -6,6 +6,7 @@
 #include "imc_datatype.hpp"
 #include "imc_conversion.hpp"
 #include "imc_block.hpp"
+#include <functional>
 #include <sstream>
 #include <math.h>
 #include <algorithm>
@@ -15,14 +16,55 @@
 #include <cstring>
 #if defined(__linux__) || defined(__APPLE__)
 #include <iconv.h>
-#elif defined(__WIN32__) || defined(_WIN32)
-#define timegm _mkgmtime
 #endif
 
 //---------------------------------------------------------------------------//
 
 namespace imc
 {
+  inline std::time_t utc_timegm(std::tm* value)
+  {
+#if defined(__WIN32__) || defined(_WIN32)
+    return _mkgmtime(value);
+#else
+    return timegm(value);
+#endif
+  }
+
+  inline std::string escape_json_string(const std::string& value)
+  {
+    static const char* hex = "0123456789abcdef";
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for ( unsigned char ch : value )
+    {
+      switch ( ch )
+      {
+        case '"': escaped += "\\\""; break;
+        case '\\': escaped += "\\\\"; break;
+        case '\b': escaped += "\\b"; break;
+        case '\f': escaped += "\\f"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default:
+          if ( ch < 0x20 )
+          {
+            escaped += "\\u00";
+            escaped.push_back(hex[(ch >> 4) & 0x0f]);
+            escaped.push_back(hex[ch & 0x0f]);
+          }
+          else
+          {
+            escaped.push_back(static_cast<char>(ch));
+          }
+      }
+    }
+
+    return escaped;
+  }
+
   struct channel_chunk {
     std::vector<unsigned char> x_bytes;
     std::vector<unsigned char> y_bytes;
@@ -32,6 +74,8 @@ namespace imc
     int x_type;
     int y_type;
   };
+
+  using channel_chunk_reader = std::function<channel_chunk(unsigned long int, unsigned long int, bool, bool)>;
 
   struct component_env
   {
@@ -328,6 +372,7 @@ namespace imc
     channel_env chnenv_;
     std::map<std::string,imc::block>* blocks_;
     const unsigned char* buffer_;
+    channel_chunk_reader chunk_reader_;
 
     imc::origin_data NO_;
     imc::language NL_;
@@ -370,6 +415,17 @@ namespace imc
     // group reference the channel belongs to
     unsigned long int group_index_;
     std::string group_uuid_, group_name_, group_comment_;
+
+    channel():
+      blocks_(nullptr), buffer_(nullptr),
+      trigger_time_frac_secs_(0.0),
+      xstepwidth_(1.0), xstart_(0.0), xprec_(0), dimension_(0),
+      xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
+      xbuffer_offset_(0), ybuffer_offset_(0), xbuffer_size_(0), ybuffer_size_(0),
+      addtime_(0), xdatatp_(numtype::unsigned_byte), ydatatp_(numtype::unsigned_byte),
+      xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
+      number_of_samples_(0), group_index_(static_cast<unsigned long int>(-1))
+    {}
 
     // constructor takes channel's block environment
     channel(channel_env &chnenv, std::map<std::string,imc::block>* blocks,
@@ -466,7 +522,7 @@ namespace imc
           yunit_.clear();
         }
         // generate std::chrono::system_clock::time_point type
-        std::time_t ts = timegm(&comp_group1.NT_.tms_); // std::mktime(&tms);
+        std::time_t ts = imc::utc_timegm(&comp_group1.NT_.tms_);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
         trigger_time_frac_secs_ = comp_group1.NT_.trigger_time_frac_secs_;
         // calculate absolute trigger-time
@@ -517,7 +573,7 @@ namespace imc
           yoffset_ = 0.0;
         }
         // generate std::chrono::system_clock::time_point type
-        std::time_t ts = timegm(&comp_group2.NT_.tms_); // std::mktime(&tms);
+        std::time_t ts = imc::utc_timegm(&comp_group2.NT_.tms_);
         trigger_time_ = std::chrono::system_clock::from_time_t(ts);
         trigger_time_frac_secs_ = comp_group2.NT_.trigger_time_frac_secs_;
         absolute_trigger_time_ = trigger_time_;
@@ -533,6 +589,11 @@ namespace imc
       // convert any non-UTF-8 codepage to UTF-8 and cleanse any text
       convert_encoding();
       cleanse_text();
+    }
+
+    void set_chunk_reader(channel_chunk_reader chunk_reader)
+    {
+      chunk_reader_ = std::move(chunk_reader);
     }
 
     // initialize metadata without loading data
@@ -596,6 +657,17 @@ namespace imc
     // convert buffer to actual datatype (loads all data)
     void load_all_data()
     {
+      if ( chunk_reader_ )
+      {
+        channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
+        const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
+        ydata_.assign(y_ptr, y_ptr + chunk.count);
+
+        const double* x_ptr = reinterpret_cast<const double*>(chunk.x_bytes.data());
+        xdata_.assign(x_ptr, x_ptr + chunk.count);
+        return;
+      }
+
       std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
       unsigned long int buffstrt = prms[3].begin();
       const unsigned char* yCSbuffer = buffer_ + buffstrt + ybuffer_offset_ + 1;
@@ -624,6 +696,11 @@ namespace imc
 
     channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
+      if ( chunk_reader_ )
+      {
+        return chunk_reader_(start, count, include_x, raw_mode);
+      }
+
         unsigned long int total_len = number_of_samples_;
 
         if ( start >= total_len )
@@ -912,30 +989,30 @@ namespace imc
       std::time_t att = std::chrono::system_clock::to_time_t(absolute_trigger_time_);
 
       std::stringstream ss;
-      ss<<"{"<<"\"uuid\":\""<<uuid_
-             <<"\",\"name\":\""<<name_
-             <<"\",\"comment\":\""<<comment_
-             <<"\",\"origin\":\""<<origin_
-             <<"\",\"origin-comment\":\""<<origin_comment_
-             <<"\",\"description\":\""<<text_
+            ss<<"{"<<"\"uuid\":\""<<imc::escape_json_string(uuid_)
+              <<"\",\"name\":\""<<imc::escape_json_string(name_)
+              <<"\",\"comment\":\""<<imc::escape_json_string(comment_)
+              <<"\",\"origin\":\""<<imc::escape_json_string(origin_)
+              <<"\",\"origin-comment\":\""<<imc::escape_json_string(origin_comment_)
+              <<"\",\"description\":\""<<imc::escape_json_string(text_)
              <<"\",\"trigger-time-nt\":\""<<std::put_time(std::gmtime(&tt),"%FT%T")
              <<"\",\"trigger-time\":\""<<std::put_time(std::gmtime(&att),"%FT%T")
-             <<"\",\"language-code\":\""<<language_code_
-             <<"\",\"codepage\":\""<<codepage_
-             <<"\",\"yname\":\""<<prepjsonstr(yname_)
-             <<"\",\"yunit\":\""<<prepjsonstr(yunit_)
+              <<"\",\"language-code\":\""<<imc::escape_json_string(language_code_)
+              <<"\",\"codepage\":\""<<imc::escape_json_string(codepage_)
+              <<"\",\"yname\":\""<<imc::escape_json_string(yname_)
+              <<"\",\"yunit\":\""<<imc::escape_json_string(yunit_)
              <<"\",\"datatype\":\""<<ydatatp_
              <<"\",\"significantbits\":\""<<ysignbits_
              <<"\",\"buffer-size\":\""<<ybuffer_size_
-             <<"\",\"xname\":\""<<prepjsonstr(xname_)
-             <<"\",\"xunit\":\""<<prepjsonstr(xunit_)
+              <<"\",\"xname\":\""<<imc::escape_json_string(xname_)
+              <<"\",\"xunit\":\""<<imc::escape_json_string(xunit_)
              <<"\",\"xstepwidth\":\""<<xstepwidth_
              <<"\",\"xoffset\":\""<<xstart_
              <<"\",\"factor\":\""<<yfactor_
              <<"\",\"offset\":\""<<yoffset_
              <<"\",\"group\":{"<<"\"index\":\""<<group_index_
-                               <<"\",\"name\":\""<<group_name_
-                               <<"\",\"comment\":\""<<group_comment_<<"\""<<"}";
+                 <<"\",\"name\":\""<<imc::escape_json_string(group_name_)
+                 <<"\",\"comment\":\""<<imc::escape_json_string(group_comment_)<<"\""<<"}";
       if ( include_data )
       {
         ss<<",\"ydata\":"<<imc::joinvec<imc::datatype>(ydata_,0,9,true)
@@ -946,26 +1023,6 @@ namespace imc
 
       return ss.str();
     }
-
-    // prepare string value for usage in JSON dump
-    std::string prepjsonstr(std::string value)
-    {
-      std::stringstream ss;
-      ss<<quoted(value);
-      return strip_quotes(ss.str());
-    }
-
-    // remove any leading or trailing double quotes
-    std::string strip_quotes(std::string astring)
-    {
-      // head
-      if ( astring.front() == '"' ) astring.erase(astring.begin()+0);
-      // tail
-      if ( astring.back() == '"' ) astring.erase(astring.end()-1);
-
-      return astring;
-    }
-
     // print channel
     void print(std::string filename, const char sep = ',', int width = 25, int yprec = 9, unsigned long int chunk_size = 100000)
     {

@@ -7,6 +7,7 @@ import pytest
 import os
 import tempfile
 import csv
+import struct
 import numpy as np
 from pathlib import Path
 
@@ -19,6 +20,24 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 DATASET_A = SAMPLES_DIR / "datasetA"
 DATASET_B = SAMPLES_DIR / "datasetB"
+IMC3_DIR = SAMPLES_DIR / "imc3"
+SANITIZED_IMC3_SAMPLES = [
+    ("imc3_sanitized_01.raw", 1),
+    ("imc3_sanitized_02.raw", 1),
+    ("imc3_sanitized_03.raw", 1),
+    ("imc3_sanitized_04.raw", 1),
+    ("imc3_sanitized_05.raw", 1),
+    ("imc3_sanitized_06.raw", 1),
+    ("imc3_sanitized_bundle.dat", 6),
+]
+SANITIZED_SINGLE_TO_BUNDLE = [
+    ("imc3_sanitized_01.raw", 0),
+    ("imc3_sanitized_02.raw", 1),
+    ("imc3_sanitized_03.raw", 2),
+    ("imc3_sanitized_04.raw", 3),
+    ("imc3_sanitized_05.raw", 4),
+    ("imc3_sanitized_06.raw", 5),
+]
 
 
 class TestModuleImport:
@@ -78,6 +97,18 @@ class TestChannelListing:
         assert isinstance(first_channel['ydata'], list)
         assert len(first_channel['xdata']) == len(first_channel['ydata'])
 
+    def test_imc2_multichannel_order_matches_file_order(self):
+        """IMC2 get_channels should preserve source-file channel order."""
+        sample_file = SAMPLES_DIR / "exampleB.raw"
+        if not sample_file.exists():
+            pytest.skip(f"Sample file not found: {sample_file}")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel['group']['name'] for channel in channels] == ['kanal1', 'kanal2', 'E06_6_121']
+        assert [int(channel['uuid']) for channel in channels] == sorted(int(channel['uuid']) for channel in channels)
+
 
 class TestDataIntegrity:
     """Test data extraction and validation"""
@@ -109,16 +140,184 @@ class TestDataIntegrity:
                 assert isinstance(val, (int, float))
 
 
-class TestUnsupportedFormats:
-    """Test clear errors for unsupported file formats"""
+class TestIMC3Support:
+    """Test positive IMC3 loading via the public Python API."""
 
-    def test_imc3_signature_reports_unsupported_format(self, tmp_path):
-        """IMC3-like headers should fail with an explicit unsupported-format error."""
-        imc3_file = tmp_path / "unsupported_imc3.dat"
-        imc3_file.write_bytes(b"|imc3,1;|CB1\x00\x00\x00\x00")
+    @pytest.mark.parametrize(
+        "imc2_name,imc3_name",
+        [
+            ("sampleA.raw", "imc3_sampleA.dat"),
+            ("sampleB.raw", "imc3_sampleB.dat"),
+            ("XY_dataset_example.dat", "imc3_XY_dataset_example.dat"),
+        ],
+    )
+    def test_imc3_samples_match_imc2_integrity(self, imc2_name, imc3_name):
+        """Paired IMC2 and IMC3 fixtures should expose the same numeric content."""
+        imc2_sample = SAMPLES_DIR / imc2_name
+        imc3_sample = IMC3_DIR / imc3_name
+        if not imc2_sample.exists():
+            pytest.skip(f"Sample file not found: {imc2_sample}")
+        if not imc3_sample.exists():
+            pytest.skip(f"Sample file not found: {imc3_sample}")
 
-        with pytest.raises(RuntimeError, match="unsupported IMC3 format"):
-            ImcTermite(str(imc3_file).encode())
+        imc2 = ImcTermite(str(imc2_sample).encode())
+        imc3 = ImcTermite(str(imc3_sample).encode())
+
+        imc2_channels = imc2.get_channels(include_data=False)
+        imc3_channels = imc3.get_channels(include_data=False)
+
+        assert len(imc2_channels) == len(imc3_channels)
+
+        for imc2_channel, imc3_channel in zip(imc2_channels, imc3_channels):
+            assert imc2.get_channel_length(imc2_channel["uuid"]) == imc3.get_channel_length(imc3_channel["uuid"])
+            assert imc2_channel.get("datatype") == imc3_channel.get("datatype")
+            assert imc2_channel.get("xunit") == imc3_channel.get("xunit")
+            assert float(imc2_channel.get("xstepwidth", 0.0)) == float(imc3_channel.get("xstepwidth", 0.0))
+            assert float(imc2_channel.get("xoffset", 0.0)) == float(imc3_channel.get("xoffset", 0.0))
+            assert float(imc2_channel.get("factor", 1.0)) == float(imc3_channel.get("factor", 1.0))
+            assert float(imc2_channel.get("offset", 0.0)) == float(imc3_channel.get("offset", 0.0))
+
+            imc2_data = imc2.get_channel_data(imc2_channel["uuid"], include_x=True)
+            imc3_data = imc3.get_channel_data(imc3_channel["uuid"], include_x=True)
+
+            np.testing.assert_allclose(imc2_data["x"], imc3_data["x"], rtol=1e-9, atol=1e-9, equal_nan=True)
+            np.testing.assert_allclose(imc2_data["y"], imc3_data["y"], rtol=1e-9, atol=1e-9, equal_nan=True)
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_names",
+        [
+            ("imc3_single-channel.dat", ["AmplitudeSpectrum"]),
+            ("imc3_multi-channel.dat", ["x", "y", "z"]),
+            ("imc3_xy_dataset.dat", ["circle"]),
+        ],
+    )
+    def test_imc3_metadata_listing(self, sample_name, expected_names):
+        sample = IMC3_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["name"] for channel in channels] == expected_names
+
+    def test_imc3_include_data_extracts_xy_values(self):
+        sample = IMC3_DIR / "imc3_xy_dataset.dat"
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=True)
+
+        assert len(channels) == 1
+        channel = channels[0]
+        assert len(channel["xdata"]) == len(channel["ydata"]) > 0
+        assert channel["xdata"][0] != channel["xdata"][1]
+        assert channel["ydata"][0] != channel["ydata"][1]
+
+    def test_imc3_rejects_compressed_files(self, tmp_path):
+        sample = tmp_path / "compressed_imc3.dat"
+        sample.write_bytes(
+            b"|imc3,1;"
+            + b"|CB1"
+            + struct.pack("<IIBBBBhHHH", 1, 2, 0, 0, 0, 1, 0, 0, 1, 0)
+        )
+
+        with pytest.raises(RuntimeError, match="unsupported IMC3 compression"):
+            ImcTermite(str(sample).encode())
+
+    @pytest.mark.parametrize("sample_name,expected_channel_count", SANITIZED_IMC3_SAMPLES)
+    def test_sanitized_imc3_metadata_listing(self, sample_name, expected_channel_count):
+        sample = IMC3_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert len(channels) == expected_channel_count
+        assert all(imc.get_channel_length(channel["uuid"]) == 148836 for channel in channels)
+
+    @pytest.mark.parametrize("sample_name", ["imc3_sanitized_bundle.dat", "imc3_sanitized_02.raw"])
+    def test_sanitized_imc3_channel_data_extracts_samples(self, sample_name):
+        sample = IMC3_DIR / sample_name
+        if not sample.exists():
+            pytest.skip(f"Sample file not found: {sample}")
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        data = imc.get_channel_data(channel["uuid"], include_x=True)
+
+        assert len(data["x"]) == len(data["y"]) == 148836
+        assert float(data["x"][0]) == 0.0
+        assert float(data["x"][1]) > float(data["x"][0])
+
+    @pytest.mark.parametrize("single_name,bundle_index", SANITIZED_SINGLE_TO_BUNDLE)
+    def test_sanitized_single_channels_match_bundle(self, single_name, bundle_index):
+        single_sample = IMC3_DIR / single_name
+        bundle_sample = IMC3_DIR / "imc3_sanitized_bundle.dat"
+        if not single_sample.exists():
+            pytest.skip(f"Sample file not found: {single_sample}")
+        if not bundle_sample.exists():
+            pytest.skip(f"Sample file not found: {bundle_sample}")
+
+        single = ImcTermite(str(single_sample).encode())
+        bundle = ImcTermite(str(bundle_sample).encode())
+
+        single_channel = single.get_channels(include_data=False)[0]
+        bundle_channel = bundle.get_channels(include_data=False)[bundle_index]
+
+        assert single.get_channel_length(single_channel["uuid"]) == bundle.get_channel_length(bundle_channel["uuid"])
+        assert single_channel.get("datatype") == bundle_channel.get("datatype")
+        assert single_channel.get("xunit") == bundle_channel.get("xunit")
+        assert single_channel.get("yunit") == bundle_channel.get("yunit")
+        assert float(single_channel.get("xstepwidth", 0.0)) == float(bundle_channel.get("xstepwidth", 0.0))
+        assert float(single_channel.get("xoffset", 0.0)) == float(bundle_channel.get("xoffset", 0.0))
+        assert float(single_channel.get("factor", 1.0)) == float(bundle_channel.get("factor", 1.0))
+        assert float(single_channel.get("offset", 0.0)) == float(bundle_channel.get("offset", 0.0))
+
+        single_scaled = single.get_channel_data(single_channel["uuid"], include_x=True)
+        bundle_scaled = bundle.get_channel_data(bundle_channel["uuid"], include_x=True)
+        np.testing.assert_allclose(single_scaled["x"], bundle_scaled["x"], rtol=1e-9, atol=1e-9, equal_nan=True)
+        np.testing.assert_allclose(single_scaled["y"], bundle_scaled["y"], rtol=1e-9, atol=1e-9, equal_nan=True)
+
+        single_raw = single.get_channel_data(single_channel["uuid"], include_x=False, mode="raw")
+        bundle_raw = bundle.get_channel_data(bundle_channel["uuid"], include_x=False, mode="raw")
+        np.testing.assert_array_equal(single_raw["y"], bundle_raw["y"])
+
+
+class TestJsonEscaping:
+    """Regression tests for JSON metadata escaping."""
+
+    def test_metadata_with_control_characters_stays_valid_json(self, tmp_path):
+        reg_file = tmp_path / "json_escape_regression.raw"
+
+        name = b'LINE\nTAB\tQ"'
+        comment = b'COMMENT\tWITH\nQUOTE"'
+        raw = bytearray()
+        raw += TestChannelStateRegression._block("CF", "2,1", version=2)
+        raw += TestChannelStateRegression._block("CK", "1,1")
+        raw += TestChannelStateRegression._block("CG", "1,1,1")
+        raw += TestChannelStateRegression._block("CD", "1E-1,1,1,s,0,0,0")
+        raw += TestChannelStateRegression._block("NT", "1,1,2020,0,0,0.0")
+        raw += TestChannelStateRegression._block("CC", "1,1")
+        raw += TestChannelStateRegression._block("CP", "1,2,4,16,0,0,1,0")
+        raw += TestChannelStateRegression._block("Cb", "1,0,1,1,0,4,0,4,1,0.0,0.0")
+        raw += TestChannelStateRegression._block(
+            "CN",
+            b"0,0,0,"
+            + str(len(name)).encode("ascii")
+            + b"," + name
+            + b"," + str(len(comment)).encode("ascii")
+            + b"," + comment,
+        )
+        raw += TestChannelStateRegression._block("CS", b"1," + bytes([1, 0, 2, 0]))
+        reg_file.write_bytes(raw)
+
+        channel = ImcTermite(str(reg_file).encode()).get_channels(include_data=False)[0]
+
+        assert channel["group"]["name"] == name.decode("ascii")
+        assert channel["group"]["comment"] == comment.decode("ascii")
 
 
 class TestChannelStateRegression:
