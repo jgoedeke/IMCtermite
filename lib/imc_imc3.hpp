@@ -3,8 +3,10 @@
 #ifndef IMCIMC3
 #define IMCIMC3
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -286,12 +288,11 @@ namespace imc
                             unsigned long int count, int type) const
       {
         size_t bytes_per_sample = bytes_per_numeric_type(static_cast<imc::numtype>(type));
-        unsigned long int byte_offset = start * bytes_per_sample;
-        unsigned long int byte_count = count * bytes_per_sample;
+        size_t byte_offset = static_cast<size_t>(start) * bytes_per_sample;
+        size_t byte_count = static_cast<size_t>(count) * bytes_per_sample;
         if ( type == static_cast<int>(imc::numtype::six_byte_unsigned_long) )
         {
-          out.resize(count * 8);
-          uint64_t* dest = reinterpret_cast<uint64_t*>(out.data());
+          out.resize(static_cast<size_t>(count) * sizeof(uint64_t));
           for ( unsigned long int i = 0; i < count; ++i )
           {
             uint64_t value = 0;
@@ -299,7 +300,7 @@ namespace imc
             {
               value |= static_cast<uint64_t>(base[byte_offset + i * 6 + b]) << (8 * b);
             }
-            dest[i] = value;
+            std::memcpy(out.data() + static_cast<size_t>(i) * sizeof(uint64_t), &value, sizeof(uint64_t));
           }
           return;
         }
@@ -994,7 +995,7 @@ namespace imc
 
           if ( next_key != key_cc1 )
           {
-            throw std::runtime_error("unsupported IMC3 metadata key in fixture path");
+            throw std::runtime_error("unsupported IMC3 metadata key while parsing channel descriptors");
           }
 
           channel chn = parse_channel_descriptor(data, size, offset, true, &current_raw_offset);
