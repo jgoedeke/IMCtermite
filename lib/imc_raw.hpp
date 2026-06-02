@@ -313,7 +313,7 @@ namespace imc
         const imc::imc3::channel& channel = imc3_dataset_.get_channel(uuid);
         if ( !channel.is_event_channel() )
         {
-          throw std::runtime_error("channel is numeric; use read_chunk() instead");
+          throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
         }
 
         unsigned long int total = get_channel_length(uuid);
@@ -329,7 +329,7 @@ namespace imc
       imc::channel channel = imc2_dataset_.get_channel(uuid);
       if ( !channel.is_event_channel() )
       {
-        throw std::runtime_error("channel is numeric; use read_chunk() instead");
+        throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
       }
 
       unsigned long int total = get_channel_length(uuid);
@@ -349,7 +349,7 @@ namespace imc
         const imc::imc3::channel& channel = imc3_dataset_.get_channel(uuid);
         if ( !channel.is_event_channel() )
         {
-          throw std::runtime_error("channel is numeric; use read_chunk() instead");
+          throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
         }
 
         return build_channel_event_chunk(
@@ -365,7 +365,7 @@ namespace imc
       imc::channel channel = imc2_dataset_.get_channel(uuid);
       if ( !channel.is_event_channel() )
       {
-        throw std::runtime_error("channel is numeric; use read_chunk() instead");
+        throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
       }
 
       return build_channel_event_chunk(
