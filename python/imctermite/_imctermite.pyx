@@ -36,6 +36,63 @@ cdef bytes _as_bytes(obj):
     else:
         return str(obj).encode('utf-8')
 
+cdef dict _decode_numeric_event_payload(channel_events payload, bool include_timestamps):
+  cdef Py_ssize_t index
+  cdef Py_ssize_t count
+  cdef Py_ssize_t offset = 0
+  cdef list events = []
+  cdef list y_values
+  cdef dict event
+  cdef cnp.ndarray y_arr
+  cdef cnp.ndarray x_arr
+
+  for index in range(payload.counts.size()):
+    count = payload.counts[index]
+    y_values = [payload.yvalues[offset + item] for item in range(count)]
+    y_arr = np.asarray(y_values, dtype=np.float64)
+    x_arr = payload.xstarts[index] + np.arange(count, dtype=np.float64) * payload.xstepwidths[index]
+    event = {
+      "x": x_arr,
+      "y": y_arr,
+      "xstart": payload.xstarts[index],
+      "xstepwidth": payload.xstepwidths[index],
+    }
+    if include_timestamps:
+      event["timestamp"] = payload.timestamps[index]
+    events.append(event)
+    offset += count
+
+  return {"events": events}
+
+
+cdef dict _decode_numeric_event_chunk_payload(channel_event_chunk payload, bool include_timestamps):
+  cdef Py_ssize_t index
+  cdef Py_ssize_t count
+  cdef Py_ssize_t offset = 0
+  cdef list events = []
+  cdef list y_values
+  cdef dict event
+  cdef cnp.ndarray y_arr
+  cdef cnp.ndarray x_arr
+
+  for index in range(payload.counts.size()):
+    count = payload.counts[index]
+    y_values = [payload.yvalues[offset + item] for item in range(count)]
+    y_arr = np.asarray(y_values, dtype=np.float64)
+    x_arr = payload.xstarts[index] + np.arange(count, dtype=np.float64) * payload.xstepwidths[index]
+    event = {
+      "x": x_arr,
+      "y": y_arr,
+      "xstart": payload.xstarts[index],
+      "xstepwidth": payload.xstepwidths[index],
+    }
+    if include_timestamps:
+      event["timestamp"] = payload.timestamps[index]
+    events.append(event)
+    offset += count
+
+  return {"events": events}
+
 cdef class imctermite:
 
   # C++ instance of class
@@ -73,8 +130,8 @@ cdef class imctermite:
     cdef cnp.ndarray y_arr
     cdef bool raw_mode = (mode == "raw")
 
-    if numeric_type == 10:
-      raise RuntimeError("TSA event streaming via iter_channel_numpy is not implemented; use iter_channel_events() or get_channel_events() instead")
+    if self.cppimc.is_event_channel(channel_uuid):
+      raise RuntimeError("event channel streaming via iter_channel_numpy is not implemented; use iter_channel_events() or get_channel_events() instead")
     
     # Map imc::numtype to numpy dtype
     # Types 9 (imc_devices_transitional_recording) and 10 (timestamp_ascii) 
@@ -141,6 +198,9 @@ cdef class imctermite:
         result["x"] = events["timestamps"]
       return result
 
+    if self.cppimc.is_event_channel(channel_uuid):
+      return self.get_channel_events(channeluuid, include_timestamps=include_x)
+
     if total_len == 0:
         res = {'y': np.array([])}
         if include_x:
@@ -152,6 +212,10 @@ cdef class imctermite:
   def get_channel_events(self, channeluuid, bool include_timestamps=True):
     cdef bytes channel_uuid = _as_bytes(channeluuid)
     cdef channel_events events = self.cppimc.get_channel_events(channel_uuid)
+
+    if events.numeric:
+      return _decode_numeric_event_payload(events, include_timestamps)
+
     cdef list texts = [events.texts[i].decode('utf-8', errors='ignore') for i in range(events.texts.size())]
 
     result = {"texts": texts}
@@ -166,13 +230,22 @@ cdef class imctermite:
     cdef channel_event_chunk chunk
     cdef list texts
 
-    if numeric_type != 10:
+    if not self.cppimc.is_event_channel(channel_uuid):
       raise RuntimeError("channel is numeric; use iter_channel_numpy() instead")
 
     while True:
       chunk = self.cppimc.read_channel_event_chunk(channel_uuid, start, chunk_rows)
       if chunk.count == 0:
         break
+
+      if chunk.numeric:
+        result = {
+          "start": chunk.start,
+          "events": _decode_numeric_event_chunk_payload(chunk, include_timestamps)["events"],
+        }
+        yield result
+        start += chunk.count
+        continue
 
       texts = [chunk.texts[i].decode('utf-8', errors='ignore') for i in range(chunk.texts.size())]
       result = {

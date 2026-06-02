@@ -17,10 +17,15 @@ from tests.assertions import assert_exact_allclose, assert_tsa_csv_rows
 from tests.sample_manifest import (
     DATASET_A_DIR,
     DATASET_B_DIR,
+    EVENTS_DIR,
     IMC3_DIR,
+    MIXED_MULTI_EVENT_SAMPLE_CASES,
+    MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES,
     PROJECT_ROOT,
     SAMPLES_DIR,
     require_sample,
+    SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES,
+    SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
 )
@@ -92,6 +97,61 @@ CPP_PROBE_SOURCE = textwrap.dedent(
         }
     }
 
+    void print_double_array(const std::vector<double>& values)
+    {
+        std::cout << "[";
+        for ( size_t i = 0; i < values.size(); ++i )
+        {
+            if ( i > 0 ) std::cout << ",";
+            std::cout << values[i];
+        }
+        std::cout << "]";
+    }
+
+    void print_string_array(const std::vector<std::string>& values)
+    {
+        std::cout << "[";
+        for ( size_t i = 0; i < values.size(); ++i )
+        {
+            if ( i > 0 ) std::cout << ",";
+            std::cout << '"' << imc::escape_json_string(values[i]) << '"';
+        }
+        std::cout << "]";
+    }
+
+    template <typename EventPayload>
+    void print_numeric_event_array(const EventPayload& payload)
+    {
+        std::cout << "[";
+        size_t offset = 0;
+        for ( size_t i = 0; i < payload.counts.size(); ++i )
+        {
+            if ( i > 0 ) std::cout << ",";
+
+            unsigned long int count = payload.counts[i];
+            std::vector<double> x_values;
+            std::vector<double> y_values;
+            x_values.reserve(count);
+            y_values.reserve(count);
+            for ( unsigned long int sample_index = 0; sample_index < count; ++sample_index )
+            {
+                x_values.push_back(payload.xstarts[i] + static_cast<double>(sample_index) * payload.xstepwidths[i]);
+                y_values.push_back(payload.yvalues[offset + sample_index]);
+            }
+
+            std::cout << R"({"x":)";
+            print_double_array(x_values);
+            std::cout << R"(,"y":)";
+            print_double_array(y_values);
+            std::cout << R"(,"xstart":)" << payload.xstarts[i]
+                      << R"(,"xstepwidth":)" << payload.xstepwidths[i]
+                      << R"(,"timestamp":)" << payload.timestamps[i]
+                      << "}";
+            offset += count;
+        }
+        std::cout << "]";
+    }
+
     int main(int argc, char** argv)
     {
         if ( argc < 2 )
@@ -124,19 +184,19 @@ CPP_PROBE_SOURCE = textwrap.dedent(
 
             imc::raw raw(argv[2]);
             imc::channel_events events = raw.get_channel_events(argv[3]);
-            std::cout << R"({"texts":[)";
-            for ( size_t i = 0; i < events.texts.size(); ++i )
+            if ( events.numeric )
             {
-                if ( i > 0 ) std::cout << ",";
-                std::cout << '"' << imc::escape_json_string(events.texts[i]) << '"';
+                std::cout << R"({"events":)";
+                print_numeric_event_array(events);
+                std::cout << "}";
+                return 0;
             }
-            std::cout << R"(],"timestamps":[)";
-            for ( size_t i = 0; i < events.timestamps.size(); ++i )
-            {
-                if ( i > 0 ) std::cout << ",";
-                std::cout << events.timestamps[i];
-            }
-            std::cout << R"(]})";
+
+            std::cout << R"({"texts":)";
+            print_string_array(events.texts);
+            std::cout << R"(,"timestamps":)";
+            print_double_array(events.timestamps);
+            std::cout << "}";
             return 0;
         }
 
@@ -153,19 +213,19 @@ CPP_PROBE_SOURCE = textwrap.dedent(
                 static_cast<unsigned long int>(std::stoul(argv[4])),
                 static_cast<unsigned long int>(std::stoul(argv[5]))
             );
-            std::cout << R"({"start":)" << chunk.start << R"(,"count":)" << chunk.count << R"(,"texts":[)";
-            for ( size_t i = 0; i < chunk.texts.size(); ++i )
+            if ( chunk.numeric )
             {
-                if ( i > 0 ) std::cout << ",";
-                std::cout << '"' << imc::escape_json_string(chunk.texts[i]) << '"';
+                std::cout << R"({"start":)" << chunk.start << R"(,"count":)" << chunk.count << R"(,"events":)";
+                print_numeric_event_array(chunk);
+                std::cout << "}";
+                return 0;
             }
-            std::cout << R"(],"timestamps":[)";
-            for ( size_t i = 0; i < chunk.timestamps.size(); ++i )
-            {
-                if ( i > 0 ) std::cout << ",";
-                std::cout << chunk.timestamps[i];
-            }
-            std::cout << R"(]})";
+
+            std::cout << R"({"start":)" << chunk.start << R"(,"count":)" << chunk.count << R"(,"texts":)";
+            print_string_array(chunk.texts);
+            std::cout << R"(,"timestamps":)";
+            print_double_array(chunk.timestamps);
+            std::cout << "}";
             return 0;
         }
 
@@ -272,6 +332,10 @@ CHUNK_PARITY_CASES = [
     (DATASET_B_DIR / "datasetB_1.raw", 0, False),
 ]
 
+NUMERIC_EVENT_SAMPLE_NAMES = [
+    sample_name for sample_name, _ in (SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES + SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES)
+]
+
 
 class TestCppFacade:
     """Regression tests for the legacy C++ facade surfaces."""
@@ -368,6 +432,76 @@ class TestCppFacade:
         assert cpp_chunk["texts"] == python_chunks[1]["texts"]
         assert_exact_allclose(cpp_chunk["timestamps"], python_chunks[1]["timestamps"])
 
+    @pytest.mark.parametrize("sample_name", ["imc2_event_numeric_varied_metadata.dat", "imc3_event_numeric_varied_metadata.dat"])
+    def test_numeric_event_get_channel_adapter_matches_python_eager_load(self, sample_name, cpp_probe_binary):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        python_channel = ImcTermite(str(sample).encode()).get_channels(include_data=True)[0]
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_json", str(sample), python_channel["uuid"]],
+        )
+
+        cpp_channel = json.loads(run_output[run_output.find("{"):])
+
+        assert cpp_channel["uuid"] == python_channel["uuid"]
+        assert cpp_channel["datatype"] == python_channel["datatype"] == "7"
+        assert len(cpp_channel["events"]) == len(python_channel["events"])
+        for cpp_event, python_event in zip(cpp_channel["events"], python_channel["events"]):
+            assert cpp_event["timestamp"] == python_event["timestamp"]
+            assert cpp_event["xstart"] == python_event["xstart"]
+            assert cpp_event["xstepwidth"] == python_event["xstepwidth"]
+            assert_exact_allclose(cpp_event["xdata"], python_event["xdata"])
+            assert_exact_allclose(cpp_event["ydata"], python_event["ydata"])
+
+    @pytest.mark.parametrize("sample_name", NUMERIC_EVENT_SAMPLE_NAMES)
+    def test_numeric_event_get_channel_events_matches_python(self, sample_name, cpp_probe_binary):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        python_channel = ImcTermite(str(sample).encode())
+        python_metadata = python_channel.get_channels(include_data=False)[0]
+        python_events = python_channel.get_channel_events(python_metadata["uuid"])
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_events_json", str(sample), python_metadata["uuid"]],
+        )
+
+        cpp_events = json.loads(run_output[run_output.find("{"):])
+
+        assert len(cpp_events["events"]) == len(python_events["events"])
+        for cpp_event, python_event in zip(cpp_events["events"], python_events["events"]):
+            assert cpp_event["timestamp"] == python_event["timestamp"]
+            assert cpp_event["xstart"] == python_event["xstart"]
+            assert cpp_event["xstepwidth"] == python_event["xstepwidth"]
+            assert_exact_allclose(cpp_event["x"], python_event["x"])
+            assert_exact_allclose(cpp_event["y"], python_event["y"])
+
+    @pytest.mark.parametrize("sample_name", NUMERIC_EVENT_SAMPLE_NAMES)
+    def test_numeric_event_read_channel_event_chunk_matches_python(self, sample_name, cpp_probe_binary):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        python_channel = ImcTermite(str(sample).encode())
+        python_metadata = python_channel.get_channels(include_data=False)[0]
+        python_chunks = list(python_channel.iter_channel_events(python_metadata["uuid"], chunk_rows=1))
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_channel_event_chunk_json", str(sample), python_metadata["uuid"], "1", "1"],
+        )
+
+        cpp_chunk = json.loads(run_output[run_output.find("{"):])
+
+        assert cpp_chunk["start"] == python_chunks[1]["start"] == 1
+        assert cpp_chunk["count"] == 1
+        assert len(cpp_chunk["events"]) == 1
+        assert cpp_chunk["events"][0]["timestamp"] == python_chunks[1]["events"][0]["timestamp"]
+        assert cpp_chunk["events"][0]["xstart"] == python_chunks[1]["events"][0]["xstart"]
+        assert cpp_chunk["events"][0]["xstepwidth"] == python_chunks[1]["events"][0]["xstepwidth"]
+        assert_exact_allclose(cpp_chunk["events"][0]["x"], python_chunks[1]["events"][0]["x"])
+        assert_exact_allclose(cpp_chunk["events"][0]["y"], python_chunks[1]["events"][0]["y"])
+
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_print_channel_matches_python_csv_output(self, sample_name, cpp_probe_binary, tmp_path):
         sample = require_sample(TSA_DIR / sample_name)
@@ -383,6 +517,74 @@ class TestCppFacade:
 
         rows = list(csv.reader(output_file.read_text().splitlines()))
         assert_tsa_csv_rows(sample_name, rows)
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_groups,_expected_lengths",
+        MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES,
+    )
+    def test_multi_channel_numeric_event_get_channel_events_match_python(
+        self,
+        sample_name,
+        expected_groups,
+        _expected_lengths,
+        cpp_probe_binary,
+    ):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        python_imc = ImcTermite(str(sample).encode())
+        channels = python_imc.get_channels(include_data=False)
+
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+        for channel in channels:
+            python_events = python_imc.get_channel_events(channel["uuid"])
+            run_output = _run_cpp_probe(
+                cpp_probe_binary,
+                ["get_channel_events_json", str(sample), channel["uuid"]],
+            )
+            cpp_events = json.loads(run_output[run_output.find("{"):])
+
+            assert len(cpp_events["events"]) == len(python_events["events"])
+            for cpp_event, python_event in zip(cpp_events["events"], python_events["events"]):
+                assert cpp_event["timestamp"] == python_event["timestamp"]
+                assert cpp_event["xstart"] == python_event["xstart"]
+                assert cpp_event["xstepwidth"] == python_event["xstepwidth"]
+                assert_exact_allclose(cpp_event["x"], python_event["x"])
+                assert_exact_allclose(cpp_event["y"], python_event["y"])
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_groups,expected_types,_expected_lengths",
+        MIXED_MULTI_EVENT_SAMPLE_CASES,
+    )
+    def test_mixed_multi_event_channels_match_python(
+        self,
+        sample_name,
+        expected_groups,
+        expected_types,
+        _expected_lengths,
+        cpp_probe_binary,
+    ):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        python_imc = ImcTermite(str(sample).encode())
+        channels = python_imc.get_channels(include_data=False)
+
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+        assert [channel["channel_type"] for channel in channels] == expected_types
+        for channel in channels[1:]:
+            python_events = python_imc.get_channel_events(channel["uuid"])
+            run_output = _run_cpp_probe(
+                cpp_probe_binary,
+                ["get_channel_events_json", str(sample), channel["uuid"]],
+            )
+            cpp_events = json.loads(run_output[run_output.find("{"):])
+
+            assert len(cpp_events["events"]) == len(python_events["events"])
+            for cpp_event, python_event in zip(cpp_events["events"], python_events["events"]):
+                assert cpp_event["timestamp"] == python_event["timestamp"]
+                assert cpp_event["xstart"] == python_event["xstart"]
+                assert cpp_event["xstepwidth"] == python_event["xstepwidth"]
+                assert_exact_allclose(cpp_event["x"], python_event["x"])
+                assert_exact_allclose(cpp_event["y"], python_event["y"])
 
     @pytest.mark.parametrize("sample_path,channel_index,include_x", CHUNK_PARITY_CASES)
     @pytest.mark.parametrize("mode", ["scaled", "raw"])

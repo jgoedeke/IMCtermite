@@ -11,13 +11,14 @@ from tests.assertions import assert_tsa_csv_rows
 from tests.sample_manifest import (
     BASIC_SAMPLE_INFO_CASES,
     CLI_PATH,
+    EVENTS_DIR,
     IMC3_DIR,
     require_sample,
     SANITIZED_IMC3_SAMPLES,
     SAMPLES_DIR,
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
-    iter_supported_sample_files,
+    iter_sample_files,
 )
 
 CLI = CLI_PATH
@@ -268,6 +269,33 @@ class TestCSVOutput:
         rows = list(csv.reader(csv_files[0].read_text().splitlines()))
         assert_tsa_csv_rows(sample_name, rows)
 
+    @pytest.mark.parametrize(
+        "sample_name",
+        ["imc2_event_numeric_varied_metadata.dat", "imc3_event_numeric_varied_metadata.dat"],
+    )
+    def test_numeric_event_csv_output_contains_event_context(self, tmp_path, sample_name):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        output_dir = tmp_path / "numeric_event_csv_output"
+        output_dir.mkdir()
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--output", str(output_dir)],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        csv_files = list(output_dir.glob("*.csv"))
+        assert len(csv_files) == 1
+        rows = list(csv.reader(csv_files[0].read_text().splitlines()))
+        assert rows[0] == ["event_index", "event_timestamp", "x", "Signal"]
+        assert rows[1] == ["", "seconds_since_1980", "s", "V"]
+        assert rows[2][0] == "0"
+        assert float(rows[2][1]) == 1464782400.0
+        assert float(rows[2][2]) == -0.05
+
 
 class TestMultipleFiles:
     """Test processing multiple sample files"""
@@ -275,7 +303,7 @@ class TestMultipleFiles:
     def test_process_all_sample_files(self):
         """Should successfully process all .raw and .dat files in samples directory (list channels)"""
         samples_root = SAMPLES_DIR
-        samples = iter_supported_sample_files(samples_root)
+        samples = iter_sample_files(samples_root)
         
         failed = []
         for sample in samples:
@@ -304,7 +332,7 @@ class TestMultipleFiles:
         import shutil
         
         samples_root = SAMPLES_DIR
-        samples = iter_supported_sample_files(samples_root)
+        samples = iter_sample_files(samples_root)
         
         # Create temp directory for output
         temp_dir = tempfile.mkdtemp()

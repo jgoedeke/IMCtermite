@@ -44,18 +44,16 @@ class ChannelNumpyChunk(TypedDict):
 
 
 class ChannelEventChunk(TypedDict, total=False):
-        """One chunk returned by `ImcTermite.iter_channel_events()`.
+    """One chunk returned by `ImcTermite.iter_channel_events()`.
 
-        Keys:
-        - `start`: start index of this chunk in the event channel.
-        - `texts`: decoded TSA event payload strings.
-        - `timestamps`: numpy array of decoded timestamps when
-            `include_timestamps=True`.
-        """
+    TSA chunks expose `texts` and optional `timestamps`.
+    Numeric-event chunks expose `events`, each with per-event sample arrays.
+    """
 
-        start: int
-        texts: list[str]
-        timestamps: npt.NDArray[np.float64]
+    start: int
+    texts: list[str]
+    timestamps: npt.NDArray[np.float64]
+    events: list["NumericChannelEvent"]
 
 
 class ChannelNumpyData(TypedDict):
@@ -83,19 +81,34 @@ class ChannelTsaData(TypedDict, total=False):
 
 
 class ChannelEventData(TypedDict, total=False):
-        """Return value of `ImcTermite.get_channel_events()`.
+    """Return value of `ImcTermite.get_channel_events()`.
 
-        Keys:
-        - `texts`: decoded TSA event payload strings.
-        - `timestamps`: numpy array of decoded timestamps when
-            `include_timestamps=True`.
-        """
+    TSA event channels return `texts` and optional `timestamps`.
+    Numeric event channels return `events` with per-event sample arrays.
+    """
 
-        texts: list[str]
-        timestamps: npt.NDArray[np.float64]
+    texts: list[str]
+    timestamps: npt.NDArray[np.float64]
+    events: list["NumericChannelEvent"]
 
 
-ChannelData = ChannelNumpyData | ChannelTsaData
+class NumericChannelEvent(TypedDict, total=False):
+    """One numeric event with per-event sample arrays."""
+
+    timestamp: float
+    xstart: float
+    xstepwidth: float
+    x: npt.NDArray[np.float64]
+    y: npt.NDArray[np.float64]
+
+
+class ChannelNumericEventData(TypedDict):
+    """Return value of event-native APIs for numeric multi-event channels."""
+
+    events: list[NumericChannelEvent]
+
+
+ChannelData = ChannelNumpyData | ChannelTsaData | ChannelNumericEventData
 
 
 class ImcTermite:
@@ -169,8 +182,8 @@ class ImcTermite:
             key when `include_x=True`.
 
         Note:
-            TSA event channels are intentionally excluded from this numeric
-            streaming API in the first implementation pass and raise
+            Event channels are intentionally excluded from this numeric
+            streaming API and raise
             `RuntimeError` instead.
         """
 
@@ -200,7 +213,8 @@ class ImcTermite:
         Returns:
             Numeric channels return numpy `x`/`y` arrays. TSA event channels
             return decoded `text` payloads and, when `include_x=True`, a numpy
-            `x` array with decoded timestamps.
+            `x` array with decoded timestamps. Numeric event channels return an
+            event-native `events` list with per-event `x`/`y` arrays.
         """
 
         return cast(
@@ -213,18 +227,19 @@ class ImcTermite:
         channeluuid: str | bytes,
         include_timestamps: bool = True,
     ) -> ChannelEventData:
-        """Return TSA event payloads using an event-native shape.
+        """Return event payloads using an event-native shape.
 
         Args:
             channeluuid: Channel UUID.
             include_timestamps: Include decoded timestamps in the result.
 
         Returns:
-            A dict containing `texts` and, when requested, `timestamps`.
+            TSA channels return `texts` and optional `timestamps`. Numeric
+            multi-event channels return `events` with per-event sample arrays.
 
         Note:
-            This method is only valid for TSA event channels and raises
-            `RuntimeError` for numeric channels.
+            This method is only valid for event channels and raises
+            `RuntimeError` for plain numeric channels.
         """
 
         return cast(
@@ -239,7 +254,7 @@ class ImcTermite:
         chunk_rows: int = 1_000_000,
         start_index: int = 0,
     ) -> Iterator[ChannelEventChunk]:
-        """Iterate TSA event data in chunks.
+        """Iterate event data in chunks.
 
         Args:
             channeluuid: Channel UUID.
@@ -248,11 +263,12 @@ class ImcTermite:
             start_index: Start reading at this event index.
 
         Yields:
-            Dicts containing `start`, `texts`, and optionally `timestamps`.
+            TSA chunks expose `texts` and optional `timestamps`. Numeric-event
+            chunks expose `events` with per-event sample arrays.
 
         Note:
-            This method is only valid for TSA event channels and raises
-            `RuntimeError` for numeric channels.
+            This method is only valid for event channels and raises
+            `RuntimeError` for plain numeric channels.
         """
 
         return cast(

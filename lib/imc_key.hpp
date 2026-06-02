@@ -75,6 +75,8 @@ namespace imc
     key(true,"CC","start of component",1),
     key(true,"CP","buffer, datatype and samples of component",1),
     key(true,"Cb","buffer description",1),
+    key(true,"CV","event-variable metadata",1),
+    key(true,"Cv","event-variable metadata extension",1),
     key(true,"CR","permissible range of values in component",1),
     key(true,"CN","name and comment of channel",1),
     key(true,"CS","raw binary data",1),
@@ -89,6 +91,8 @@ namespace imc
     key(false,"NU","user defined key",1),
     key(false,"Np","property of channel",1),
     key(false,"NE","extraction rule for BUS channels",1),
+    key(false,"NV","event-variable metadata extension",1),
+    key(false,"Nv","event-variable metadata extension",1),
     key(false,"NL","language info and code page",1)
 
   };

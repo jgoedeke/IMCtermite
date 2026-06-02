@@ -7,12 +7,22 @@ from libcpp cimport bool
 cdef extern from "imc_raw.hpp" namespace "imc":
 
   cdef struct channel_events:
+    bool numeric
     vector[double] timestamps
     vector[string] texts
+    vector[unsigned long int] counts
+    vector[double] xstarts
+    vector[double] xstepwidths
+    vector[double] yvalues
 
   cdef struct channel_event_chunk:
+    bool numeric
     vector[double] timestamps
     vector[string] texts
+    vector[unsigned long int] counts
+    vector[double] xstarts
+    vector[double] xstepwidths
+    vector[double] yvalues
     unsigned long int start
     unsigned long int count
 
@@ -42,6 +52,9 @@ cdef extern from "imc_raw.hpp" namespace "imc":
 
     # get numeric type of a channel
     int get_channel_numeric_type(string uuid) except +
+
+    # identify whether a channel uses any event-native representation
+    bool is_event_channel(string uuid) except +
 
     # read a chunk of channel data
     channel_chunk read_channel_chunk(string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode) except +

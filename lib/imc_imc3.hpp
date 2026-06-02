@@ -53,6 +53,7 @@ namespace imc
     constexpr uint32_t key_cm1 = make_key('|','C','M','1');
     constexpr uint32_t key_ch1 = make_key('|','C','H','1');
     constexpr uint32_t key_ch2 = make_key('|','C','H','2');
+    constexpr uint32_t key_cw1 = make_key('|','C','w','1');
     constexpr uint32_t key_cz1 = make_key('|','C','Z','1');
     constexpr uint32_t key_cn1 = make_key('|','C','N','1');
     constexpr uint32_t key_cj1 = make_key('|','C','J','1');
@@ -216,6 +217,40 @@ namespace imc
       return static_cast<imc::numtype>(numeric_format);
     }
 
+    inline std::vector<imc::numeric_event_descriptor> parse_imc3_numeric_event_index(
+      const unsigned char* data,
+      size_t size
+    )
+    {
+      static const size_t entry_size = 72;
+
+      if ( size == 0 )
+      {
+        return {};
+      }
+
+      if ( size % entry_size != 0 )
+      {
+        throw std::runtime_error("invalid IMC3 numeric event index: unexpected trailing payload size");
+      }
+
+      std::vector<imc::numeric_event_descriptor> events;
+      events.reserve(size / entry_size);
+
+      for ( size_t offset = 0; offset < size; offset += entry_size )
+      {
+        imc::numeric_event_descriptor event;
+        event.start = imc::read_le_u32(data + offset + 0);
+        event.count = imc::read_le_u32(data + offset + 8);
+        event.timestamp = imc::read_le_double(data + offset + 16);
+        event.xstart = imc::read_le_double(data + offset + 40);
+        event.xstepwidth = imc::read_le_double(data + offset + 64);
+        events.push_back(event);
+      }
+
+      return events;
+    }
+
     inline std::chrono::system_clock::time_point trigger_time_to_time_point(double seconds_since_1980)
     {
       std::tm epoch_tm = {};
@@ -286,16 +321,30 @@ namespace imc
       const unsigned char* raw_data_ = nullptr;
       mutable std::vector<unsigned char> tsa_logical_stream_;
       mutable std::vector<imc::tsa_event_descriptor> tsa_event_index_;
+      std::vector<imc::numeric_event_descriptor> numeric_event_index_;
       mutable bool tsa_index_built_ = false;
+      bool numeric_event_channel_ = false;
+      unsigned long int numeric_event_total_samples_ = 0;
+      unsigned long int numeric_event_expected_count_ = 0;
 
       bool is_tsa_channel() const
       {
         return ydatatp_ == imc::numtype::timestamp_ascii;
       }
 
+      bool is_numeric_event_channel() const
+      {
+        return numeric_event_channel_;
+      }
+
+      bool is_event_channel() const
+      {
+        return is_tsa_channel() || is_numeric_event_channel();
+      }
+
       std::string channel_type() const
       {
-        return is_tsa_channel() ? std::string("event") : std::string("numeric");
+        return is_event_channel() ? std::string("event") : std::string("numeric");
       }
 
       void ensure_tsa_index() const
@@ -325,6 +374,49 @@ namespace imc
 
         ensure_tsa_index();
         return imc::decode_tsa_event_slice(tsa_logical_stream_, tsa_event_index_, xfactor_, xoffset_, start, count);
+      }
+
+      std::vector<imc::numeric_event_descriptor> read_numeric_events(unsigned long int start, unsigned long int count) const
+      {
+        if ( !is_numeric_event_channel() )
+        {
+          throw std::runtime_error("channel is not a numeric event channel");
+        }
+
+        if ( count == 0 )
+        {
+          return {};
+        }
+
+        size_t start_index = static_cast<size_t>(start);
+        if ( start_index >= numeric_event_index_.size() )
+        {
+          return {};
+        }
+
+        size_t available = numeric_event_index_.size() - start_index;
+        size_t actual_count = (std::min)(available, static_cast<size_t>(count));
+        return std::vector<imc::numeric_event_descriptor>(
+          numeric_event_index_.begin() + static_cast<long int>(start_index),
+          numeric_event_index_.begin() + static_cast<long int>(start_index + actual_count)
+        );
+      }
+
+      std::vector<double> read_numeric_event_y_values(unsigned long int start, unsigned long int count) const
+      {
+        if ( !is_numeric_event_channel() )
+        {
+          throw std::runtime_error("channel is not a numeric event channel");
+        }
+
+        if ( count == 0 )
+        {
+          return {};
+        }
+
+        std::vector<double> values;
+        append_scaled_values(values, raw_data_ + ybuffer_offset_, start, count, ydatatp_, yfactor_, yoffset_);
+        return values;
       }
 
       void append_raw_bytes(std::vector<unsigned char>& out, const unsigned char* base, unsigned long int start,
@@ -410,9 +502,9 @@ namespace imc
 
       channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode) const
       {
-        if ( is_tsa_channel() )
+        if ( is_event_channel() )
         {
-          throw std::runtime_error("TSA event streaming via iter_channel_numpy is not implemented");
+          throw std::runtime_error("event channel streaming via iter_channel_numpy is not implemented");
         }
 
         if ( start >= number_of_samples_ )
@@ -556,6 +648,34 @@ namespace imc
             ss << ",\"xdata\":" << imc::joinvec<double>(x_values, 0, xprec_, true)
                << ",\"textdata\":" << imc::join_stringvec_json(text_values);
           }
+          else if ( is_numeric_event_channel() )
+          {
+            ss << ",\"events\":[";
+            for ( size_t event_index = 0; event_index < numeric_event_index_.size(); ++event_index )
+            {
+              if ( event_index > 0 )
+              {
+                ss << ",";
+              }
+
+              const imc::numeric_event_descriptor& event = numeric_event_index_[event_index];
+              std::vector<double> x_values(event.count);
+              for ( unsigned long int sample_index = 0; sample_index < event.count; ++sample_index )
+              {
+                x_values[sample_index] = event.xstart + static_cast<double>(sample_index) * event.xstepwidth;
+              }
+              std::vector<double> y_values = read_numeric_event_y_values(event.start, event.count);
+
+              ss << "{"
+                 << "\"timestamp\":" << std::setprecision(17) << event.timestamp
+                 << ",\"xstart\":" << event.xstart
+                 << ",\"xstepwidth\":" << event.xstepwidth
+                 << ",\"xdata\":" << imc::join_doublevec_json(x_values)
+                 << ",\"ydata\":" << imc::join_doublevec_json(y_values)
+                 << "}";
+            }
+            ss << "]";
+          }
           else
           {
             channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
@@ -610,6 +730,61 @@ namespace imc
                    << imc::escape_csv_field(event.text, sep) << "\n";
             }
           }
+          return;
+        }
+
+        if ( is_numeric_event_channel() )
+        {
+          const std::string event_label = "event_index";
+          const std::string timestamp_label = "event_timestamp";
+          const std::string x_label = xname_.empty() ? std::string("x") : xname_;
+          const std::string y_label = yname_.empty()
+            ? (group_name_.empty() ? std::string("y") : group_name_)
+            : yname_;
+          const std::string timestamp_unit = "seconds_since_1980";
+
+          if ( sep == ' ' )
+          {
+            fout << std::setw(width) << std::left << event_label
+                 << std::setw(width) << std::left << timestamp_label
+                 << std::setw(width) << std::left << x_label
+                 << std::setw(width) << std::left << y_label << "\n"
+                 << std::setw(width) << std::left << ""
+                 << std::setw(width) << std::left << timestamp_unit
+                 << std::setw(width) << std::left << xunit_
+                 << std::setw(width) << std::left << yunit_ << "\n";
+          }
+          else
+          {
+            fout << event_label << sep << timestamp_label << sep << x_label << sep << y_label << "\n"
+                 << sep << timestamp_unit << sep << xunit_ << sep << yunit_ << "\n";
+          }
+
+          for ( size_t event_index = 0; event_index < numeric_event_index_.size(); ++event_index )
+          {
+            const imc::numeric_event_descriptor& event = numeric_event_index_[event_index];
+            std::vector<double> y_values = read_numeric_event_y_values(event.start, event.count);
+            for ( unsigned long int sample_index = 0; sample_index < event.count; ++sample_index )
+            {
+              double x_value = event.xstart + static_cast<double>(sample_index) * event.xstepwidth;
+              double y_value = y_values[sample_index];
+              if ( sep == ' ' )
+              {
+                fout << std::setw(width) << std::left << event_index
+                     << std::setw(width) << std::left << std::setprecision(17) << event.timestamp
+                     << std::setw(width) << std::left << std::setprecision(17) << x_value
+                     << std::setw(width) << std::left << std::setprecision(17) << y_value << "\n";
+              }
+              else
+              {
+                fout << event_index << sep
+                     << std::setprecision(17) << event.timestamp << sep
+                     << std::setprecision(17) << x_value << sep
+                     << std::setprecision(17) << y_value << "\n";
+              }
+            }
+          }
+
           return;
         }
 
@@ -850,6 +1025,150 @@ namespace imc
         }
       }
 
+      bool normalize_local_numeric_event_descriptors(std::vector<imc::numeric_event_descriptor>& descriptors,
+                                                     unsigned long int total_samples,
+                                                     unsigned long int bytes_per_sample)
+      {
+        unsigned long int accumulated = 0;
+        for ( imc::numeric_event_descriptor& descriptor : descriptors )
+        {
+          if ( descriptor.start == accumulated )
+          {
+            // already expressed in local samples
+          }
+          else if ( bytes_per_sample != 0 && descriptor.start == accumulated * bytes_per_sample )
+          {
+            descriptor.start = accumulated;
+          }
+          else
+          {
+            return false;
+          }
+
+          accumulated += descriptor.count;
+          if ( accumulated > total_samples )
+          {
+            return false;
+          }
+        }
+
+        return accumulated == total_samples;
+      }
+
+      void finalize_numeric_event_channel_assignment(channel& chn)
+      {
+        chn.number_of_samples_ = static_cast<unsigned long int>(chn.numeric_event_index_.size());
+        if ( chn.numeric_event_expected_count_ != 0
+          && chn.numeric_event_expected_count_ != chn.number_of_samples_ )
+        {
+          throw std::runtime_error("invalid IMC3 numeric event index: event count does not match |Cw1 metadata");
+        }
+      }
+
+      bool try_load_inline_numeric_event_descriptors(const unsigned char* data,
+                                                     channel& chn,
+                                                     unsigned long int channel_raw_offset,
+                                                     uint64_t chunk_bytes,
+                                                     size_t y_bytes_per_sample,
+                                                     unsigned long int& consumed_raw_bytes)
+      {
+        if ( !chn.is_numeric_event_channel() || chn.numeric_event_expected_count_ == 0 )
+        {
+          return false;
+        }
+
+        size_t descriptor_bytes = static_cast<size_t>(chn.numeric_event_expected_count_) * 72U;
+        size_t descriptor_offset = raw_begin_ + static_cast<size_t>(channel_raw_offset) + static_cast<size_t>(chunk_bytes);
+        if ( descriptor_offset + descriptor_bytes > raw_end_ )
+        {
+          return false;
+        }
+
+        std::vector<imc::numeric_event_descriptor> descriptors = parse_imc3_numeric_event_index(
+          data + descriptor_offset,
+          descriptor_bytes
+        );
+
+        if ( !normalize_local_numeric_event_descriptors(
+          descriptors,
+          chn.numeric_event_total_samples_,
+          static_cast<unsigned long int>(y_bytes_per_sample)
+        ) )
+        {
+          return false;
+        }
+
+        chn.numeric_event_index_ = std::move(descriptors);
+        finalize_numeric_event_channel_assignment(chn);
+        consumed_raw_bytes += static_cast<unsigned long int>(descriptor_bytes);
+        return true;
+      }
+
+      bool try_assign_numeric_event_descriptors(const std::vector<channel*>& numeric_channels,
+                                                const std::vector<imc::numeric_event_descriptor>& descriptors,
+                                                bool cumulative_offsets)
+      {
+        for ( channel* channel_ptr : numeric_channels )
+        {
+          channel_ptr->numeric_event_index_.clear();
+        }
+
+        size_t descriptor_index = 0;
+        unsigned long int event_sample_base = 0;
+        for ( channel* channel_ptr : numeric_channels )
+        {
+          std::vector<imc::numeric_event_descriptor> channel_descriptors;
+          unsigned long int accumulated = 0;
+          unsigned long int bytes_per_sample = static_cast<unsigned long int>(channel_ptr->ysignbits_ / 8);
+
+          while ( accumulated < channel_ptr->numeric_event_total_samples_ )
+          {
+            if ( descriptor_index >= descriptors.size() )
+            {
+              return false;
+            }
+
+            imc::numeric_event_descriptor descriptor = descriptors[descriptor_index++];
+            if ( cumulative_offsets )
+            {
+              if ( descriptor.start != event_sample_base + accumulated )
+              {
+                return false;
+              }
+              descriptor.start -= event_sample_base;
+            }
+            else
+            {
+              if ( descriptor.start == accumulated )
+              {
+                // already expressed in local samples
+              }
+              else if ( bytes_per_sample != 0 && descriptor.start == accumulated * bytes_per_sample )
+              {
+                descriptor.start = accumulated;
+              }
+              else
+              {
+                return false;
+              }
+            }
+
+            channel_descriptors.push_back(descriptor);
+            accumulated += descriptor.count;
+            if ( accumulated > channel_ptr->numeric_event_total_samples_ )
+            {
+              return false;
+            }
+          }
+
+          channel_ptr->numeric_event_index_ = std::move(channel_descriptors);
+          finalize_numeric_event_channel_assignment(*channel_ptr);
+          event_sample_base += channel_ptr->numeric_event_total_samples_;
+        }
+
+        return descriptor_index == descriptors.size();
+      }
+
       component parse_component(const unsigned char* data, size_t size, size_t& offset)
       {
         if ( read_u32(data, size, offset, "CM1 key") != key_cm1 )
@@ -888,9 +1207,10 @@ namespace imc
         (void)read_u8(data, size, offset, "CC1 zero");
         std::string xunit = read_string_u16(data, size, offset, "CC1 x unit");
 
-        if ( (flags & 0x05U) != 0U )
+        bool is_numeric_event = (flags & 0x01U) != 0U;
+        if ( (flags & 0x04U) != 0U )
         {
-          throw std::runtime_error("unsupported IMC3 channel flags: multi-event and color-value channels are not implemented");
+          throw std::runtime_error("unsupported IMC3 channel flags: color-value channels are not implemented");
         }
         (void)default_chunk_bytes;
         (void)pretrigger_use;
@@ -901,6 +1221,15 @@ namespace imc
         if ( has_second_component )
         {
           x_component = parse_component(data, size, offset);
+        }
+
+        if ( is_numeric_event && has_second_component )
+        {
+          throw std::runtime_error("unsupported IMC3 multi-event layout: only single-component event channels are implemented");
+        }
+        if ( is_numeric_event && y_component.numeric_type_ == imc::numtype::timestamp_ascii )
+        {
+          throw std::runtime_error("unsupported IMC3 multi-event layout: TSA event channels are not implemented");
         }
 
         uint32_t trigger_key = 0;
@@ -923,6 +1252,14 @@ namespace imc
           {
             throw std::runtime_error("unsupported IMC3 raw-data layout: envelopes and multi-event chunks are not implemented");
           }
+        }
+
+        uint32_t numeric_event_expected_count = 0;
+        if ( is_numeric_event && peek_u32(data, size, offset, "optional Cw1 key") == key_cw1 )
+        {
+          (void)read_u32(data, size, offset, "Cw1 key");
+          numeric_event_expected_count = read_u32(data, size, offset, "Cw1 event count");
+          (void)read_u32(data, size, offset, "Cw1 flags");
         }
 
         if ( peek_u32(data, size, offset, "optional CZ1 key") == key_cz1 )
@@ -968,6 +1305,8 @@ namespace imc
         chn.language_code_ = language_code_;
         chn.codepage_ = codepage_;
         chn.text_.clear();
+        chn.numeric_event_channel_ = is_numeric_event;
+        chn.numeric_event_expected_count_ = numeric_event_expected_count;
         chn.group_index_ = group_index;
         if ( groups_.count(group_index) == 1 )
         {
@@ -985,6 +1324,12 @@ namespace imc
         chn.ysignbits_ = y_component.significant_bits_;
         chn.yfactor_ = y_component.scale_factor_;
         chn.yoffset_ = y_component.scale_offset_;
+
+        if ( chn.group_name_.empty() )
+        {
+          chn.group_name_ = name;
+          chn.group_comment_ = comment;
+        }
 
         if ( has_second_component )
         {
@@ -1021,20 +1366,28 @@ namespace imc
         {
           size_t y_bytes_per_sample = bytes_per_numeric_type(y_component.numeric_type_);
           size_t x_bytes_per_sample = has_second_component ? bytes_per_numeric_type(x_component.numeric_type_) : 0;
-          size_t bytes_per_sample = y_bytes_per_sample + x_bytes_per_sample;
+          size_t bytes_per_sample = chn.is_numeric_event_channel() ? y_bytes_per_sample : y_bytes_per_sample + x_bytes_per_sample;
           if ( !chn.is_tsa_channel() && (bytes_per_sample == 0 || chunk_bytes % bytes_per_sample != 0) )
           {
             throw std::runtime_error("invalid IMC3 channel size: raw chunk bytes do not match component widths");
           }
 
-          chn.ybuffer_offset_ = *current_raw_offset;
+          unsigned long int channel_raw_offset = *current_raw_offset;
+          chn.ybuffer_offset_ = channel_raw_offset;
           chn.raw_data_ = nullptr;
+          chn.numeric_event_total_samples_ = chn.is_numeric_event_channel()
+            ? static_cast<unsigned long int>(chunk_bytes / y_bytes_per_sample)
+            : 0;
           chn.number_of_samples_ = chn.is_tsa_channel()
             ? 0
-            : static_cast<unsigned long int>(chunk_bytes / bytes_per_sample);
+            : (chn.is_numeric_event_channel()
+              ? 0
+              : static_cast<unsigned long int>(chunk_bytes / bytes_per_sample));
           chn.ybuffer_size_ = chn.is_tsa_channel()
             ? static_cast<unsigned long int>(chunk_bytes)
-            : static_cast<unsigned long int>(chn.number_of_samples_ * y_bytes_per_sample);
+            : static_cast<unsigned long int>(chn.is_numeric_event_channel()
+              ? chunk_bytes
+              : chn.number_of_samples_ * y_bytes_per_sample);
           chn.trigger_time_ = trigger_key == key_ch2
             ? trigger_time_to_time_point(trigger_value / 1.0e9)
             : trigger_time_to_time_point(trigger_value);
@@ -1042,15 +1395,70 @@ namespace imc
 
           if ( has_second_component )
           {
-            chn.xbuffer_offset_ = *current_raw_offset + chn.ybuffer_size_;
+            chn.xbuffer_offset_ = channel_raw_offset + chn.ybuffer_size_;
             chn.xbuffer_size_ = static_cast<unsigned long int>(chn.number_of_samples_ * x_bytes_per_sample);
           }
 
-          *current_raw_offset += static_cast<unsigned long int>(chunk_bytes);
+          unsigned long int consumed_raw_bytes = static_cast<unsigned long int>(chunk_bytes);
+          (void)try_load_inline_numeric_event_descriptors(
+            data,
+            chn,
+            channel_raw_offset,
+            chunk_bytes,
+            y_bytes_per_sample,
+            consumed_raw_bytes
+          );
+
+          *current_raw_offset += consumed_raw_bytes;
         }
 
         convert_strings(chn);
         return chn;
+      }
+
+      void finalize_numeric_event_channels(const unsigned char* data, unsigned long int current_raw_offset)
+      {
+        std::vector<channel*> numeric_channels;
+        for ( const std::string& uuid : channel_order_ )
+        {
+          channel& chn = channels_.at(uuid);
+          if ( chn.is_numeric_event_channel() && chn.numeric_event_index_.empty() )
+          {
+            numeric_channels.push_back(&chn);
+          }
+        }
+
+        if ( numeric_channels.empty() )
+        {
+          if ( raw_begin_ + current_raw_offset != raw_end_ )
+          {
+            throw std::runtime_error("unsupported IMC3 raw-data layout: descriptor sizes do not consume the raw data section");
+          }
+          return;
+        }
+
+        if ( raw_begin_ + current_raw_offset > raw_end_ )
+        {
+          throw std::runtime_error("unsupported IMC3 raw-data layout: descriptor sizes exceed the raw data section");
+        }
+
+        size_t descriptor_bytes = raw_end_ - (raw_begin_ + current_raw_offset);
+        std::vector<imc::numeric_event_descriptor> descriptors = parse_imc3_numeric_event_index(
+          data + raw_begin_ + current_raw_offset,
+          descriptor_bytes
+        );
+
+        if ( try_assign_numeric_event_descriptors(numeric_channels, descriptors, true) )
+        {
+          return;
+        }
+
+        if ( try_assign_numeric_event_descriptors(numeric_channels, descriptors, false) )
+        {
+          return;
+        }
+
+        throw std::runtime_error("invalid IMC3 numeric event index: could not assign descriptors to multi-event channels");
       }
 
       void register_channel(const channel& chn)
@@ -1129,10 +1537,7 @@ namespace imc
           register_channel(chn);
         }
 
-        if ( raw_begin_ + current_raw_offset != raw_end_ )
-        {
-          throw std::runtime_error("unsupported IMC3 raw-data layout: descriptor sizes do not consume the raw data section");
-        }
+        finalize_numeric_event_channels(data, current_raw_offset);
       }
 
       void parse_rt1(const unsigned char* data, size_t size, size_t& offset)
@@ -1501,6 +1906,17 @@ namespace imc
         if ( src.is_tsa_channel() )
         {
           dst.set_tsa_raw_payload(src.raw_data_ + src.ybuffer_offset_, src.ybuffer_size_);
+        }
+        else if ( src.is_numeric_event_channel() )
+        {
+          dst.set_numeric_event_payload(
+            src.numeric_event_index_,
+            src.numeric_event_total_samples_,
+            [this, uuid](unsigned long int start, unsigned long int count)
+            {
+              return get_channel(uuid).read_numeric_event_y_values(start, count);
+            }
+          );
         }
         dst.set_chunk_reader([this, uuid](unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
         {
