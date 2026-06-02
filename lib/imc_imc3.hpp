@@ -204,7 +204,7 @@ namespace imc
     {
       if ( numeric_format == static_cast<uint8_t>(imc::numtype::imc_devices_transitional_recording) )
       {
-        throw std::runtime_error("unsupported IMC3 data type: timestamp/event payloads are not implemented");
+        throw std::runtime_error("unsupported IMC3 data type: imc_devices_transitional_recording is not implemented");
       }
 
       if ( numeric_format < static_cast<uint8_t>(imc::numtype::unsigned_byte)

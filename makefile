@@ -47,7 +47,6 @@ GCOVR_REPORT_ARGS = \
 	--filter 'src/' \
 	--filter 'lib/' \
 	--filter 'python/imctermite/' \
-	--exclude 'src/main.cpp.cpp$$' \
 	--exclude 'python/imctermite/_imctermite.cpp$$' \
 	--exclude 'build/'
 TEST_PYTEST_COVERAGE_ARGS =

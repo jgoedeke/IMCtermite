@@ -821,12 +821,18 @@ class TestDataRegression:
                 f"Unit should be {expected['yunit']}"
         
         if 'xstepwidth' in expected:
-            assert_exact_float_equal(ch.get('xstepwidth'), expected['xstepwidth']), \
-                f"X step width should be {expected['xstepwidth']}"
+            assert_exact_float_equal(
+                ch.get('xstepwidth'),
+                expected['xstepwidth'],
+                f"X step width should be {expected['xstepwidth']}",
+            )
         
         if 'xoffset' in expected:
-            assert_exact_float_equal(ch.get('xoffset'), expected['xoffset']), \
-                f"X offset should be {expected['xoffset']}"
+            assert_exact_float_equal(
+                ch.get('xoffset'),
+                expected['xoffset'],
+                f"X offset should be {expected['xoffset']}",
+            )
         
         # Verify ydata first values
         tolerance = REGRESSION_VALUE_ATOL
