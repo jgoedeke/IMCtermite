@@ -8,15 +8,21 @@ import numpy as np
 
 from tests.assertions import (
     assert_chunk_start_progression,
+    assert_exact_allclose,
     assert_event_chunks_match_eager,
     assert_streamed_numeric_matches_eager,
 )
 from tests.sample_manifest import (
     DATASET_A_DIR as DATASET_A,
+    EVENTS_DIR,
     IMC3_DIR,
+    MIXED_MULTI_EVENT_SAMPLE_CASES,
+    MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES,
     require_sample,
+    SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES,
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
+    SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
 )
 
 try:
@@ -140,8 +146,91 @@ class TestStreaming:
         imc = ImcTermite(str(sample_file).encode())
         channel = imc.get_channels(include_data=False)[0]
 
-        with pytest.raises(RuntimeError, match="TSA event streaming"):
+        with pytest.raises(RuntimeError, match="event channel streaming"):
             next(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=16))
+
+    @pytest.mark.parametrize(
+        "sample_name,_expected_length",
+        SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES + SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
+    )
+    @pytest.mark.parametrize("chunk_rows", [1, 4])
+    def test_imc_numeric_iter_channel_events_matches_eager_api(self, sample_name, _expected_length, chunk_rows):
+        sample_file = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        eager = imc.get_channel_events(channel["uuid"])
+        streamed = list(imc.iter_channel_events(channel["uuid"], chunk_rows=chunk_rows))
+
+        assert_chunk_start_progression(streamed, "events")
+        streamed_events = [event for chunk in streamed for event in chunk["events"]]
+        assert len(streamed_events) == len(eager["events"])
+        for streamed_event, eager_event in zip(streamed_events, eager["events"]):
+            assert streamed_event["timestamp"] == eager_event["timestamp"]
+            assert streamed_event["xstart"] == eager_event["xstart"]
+            assert streamed_event["xstepwidth"] == eager_event["xstepwidth"]
+            assert_exact_allclose(streamed_event["x"], eager_event["x"])
+            assert_exact_allclose(streamed_event["y"], eager_event["y"])
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_groups,_expected_lengths",
+        MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES,
+    )
+    @pytest.mark.parametrize("chunk_rows", [1, 4])
+    def test_multi_channel_numeric_event_streams_match_eager_api(self, sample_name, expected_groups, _expected_lengths, chunk_rows):
+        sample_file = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+        for channel in channels:
+            eager = imc.get_channel_events(channel["uuid"])
+            streamed = list(imc.iter_channel_events(channel["uuid"], chunk_rows=chunk_rows))
+
+            assert_chunk_start_progression(streamed, "events")
+            streamed_events = [event for chunk in streamed for event in chunk["events"]]
+            assert len(streamed_events) == len(eager["events"])
+            for streamed_event, eager_event in zip(streamed_events, eager["events"]):
+                assert streamed_event["timestamp"] == eager_event["timestamp"]
+                assert streamed_event["xstart"] == eager_event["xstart"]
+                assert streamed_event["xstepwidth"] == eager_event["xstepwidth"]
+                assert_exact_allclose(streamed_event["x"], eager_event["x"])
+                assert_exact_allclose(streamed_event["y"], eager_event["y"])
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_groups,expected_types,_expected_lengths",
+        MIXED_MULTI_EVENT_SAMPLE_CASES,
+    )
+    @pytest.mark.parametrize("chunk_rows", [1, 4])
+    def test_mixed_numeric_and_multiple_event_streams_match_eager_api(
+        self,
+        sample_name,
+        expected_groups,
+        expected_types,
+        _expected_lengths,
+        chunk_rows,
+    ):
+        sample_file = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+        assert [channel["channel_type"] for channel in channels] == expected_types
+        for channel in channels[1:]:
+            eager = imc.get_channel_events(channel["uuid"])
+            streamed = list(imc.iter_channel_events(channel["uuid"], chunk_rows=chunk_rows))
+
+            assert_chunk_start_progression(streamed, "events")
+            streamed_events = [event for chunk in streamed for event in chunk["events"]]
+            assert len(streamed_events) == len(eager["events"])
+            for streamed_event, eager_event in zip(streamed_events, eager["events"]):
+                assert streamed_event["timestamp"] == eager_event["timestamp"]
+                assert streamed_event["xstart"] == eager_event["xstart"]
+                assert streamed_event["xstepwidth"] == eager_event["xstepwidth"]
+                assert_exact_allclose(streamed_event["x"], eager_event["x"])
+                assert_exact_allclose(streamed_event["y"], eager_event["y"])
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     @pytest.mark.parametrize("chunk_rows", [1, 4])

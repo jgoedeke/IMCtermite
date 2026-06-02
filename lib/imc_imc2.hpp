@@ -139,6 +139,116 @@ namespace imc
         }
       }
 
+      std::vector<imc::numeric_event_descriptor> parse_numeric_event_descriptors(imc::block event_block) const
+      {
+        size_t block_begin = static_cast<size_t>(event_block.get_begin());
+        size_t block_end = static_cast<size_t>(event_block.get_end());
+        const unsigned char* event_data = buffer_ + block_begin;
+        size_t block_size = block_end - block_begin + 1;
+        size_t comma_count = 0;
+        size_t payload_offset = 0;
+        for ( ; payload_offset < block_size; ++payload_offset )
+        {
+          if ( event_data[payload_offset] == ch_sep_ )
+          {
+            comma_count++;
+            if ( comma_count == 5 )
+            {
+              payload_offset++;
+              break;
+            }
+          }
+        }
+
+        if ( comma_count != 5 || block_size == 0 || event_data[block_size - 1] != ch_end_ )
+        {
+          throw std::runtime_error("invalid IMC2 numeric event metadata block");
+        }
+
+        return imc::parse_imc2_numeric_event_index(
+          event_data + payload_offset,
+          block_size - payload_offset - 1
+        );
+      }
+
+      void finalize_numeric_event_channels()
+      {
+        std::vector<imc::channel*> numeric_event_channels;
+        for ( const std::string& uuid : channel_order_ )
+        {
+          imc::channel& channel = channels_.at(uuid);
+          if ( !channel.chnenv_.Cvuuid_.empty() )
+          {
+            numeric_event_channels.push_back(&channel);
+          }
+        }
+
+        if ( numeric_event_channels.empty() )
+        {
+          return;
+        }
+
+        std::vector<imc::block*> event_blocks;
+        for ( imc::block& blk : rawblocks_ )
+        {
+          if ( blk.get_key().name_ == "CV" )
+          {
+            event_blocks.push_back(&blk);
+          }
+        }
+
+        if ( event_blocks.size() != 1 )
+        {
+          throw std::runtime_error("invalid IMC2 numeric event metadata: expected a single shared CV block for multi-channel event files");
+        }
+
+        std::vector<imc::numeric_event_descriptor> descriptors = parse_numeric_event_descriptors(*event_blocks[0]);
+
+        size_t descriptor_index = 0;
+        unsigned long int event_sample_base = 0;
+        for ( imc::channel* channel_ptr : numeric_event_channels )
+        {
+          if ( channel_ptr->ysignbits_ == 0 )
+          {
+            throw std::runtime_error("invalid IMC2 numeric event channel layout");
+          }
+
+          unsigned long int channel_total_samples = channel_ptr->ybuffer_size_ / static_cast<unsigned long int>(channel_ptr->ysignbits_ / 8);
+          std::vector<imc::numeric_event_descriptor> channel_events;
+          unsigned long int accumulated = 0;
+
+          while ( accumulated < channel_total_samples )
+          {
+            if ( descriptor_index >= descriptors.size() )
+            {
+              throw std::runtime_error("invalid IMC2 numeric event metadata: missing event descriptors");
+            }
+
+            imc::numeric_event_descriptor descriptor = descriptors[descriptor_index++];
+            if ( descriptor.start != event_sample_base + accumulated )
+            {
+              throw std::runtime_error("invalid IMC2 numeric event metadata: unexpected event start offset");
+            }
+
+            descriptor.start -= event_sample_base;
+            channel_events.push_back(descriptor);
+            accumulated += descriptor.count;
+            if ( accumulated > channel_total_samples )
+            {
+              throw std::runtime_error("invalid IMC2 numeric event metadata: event counts exceed raw sample data");
+            }
+          }
+
+          channel_ptr->set_numeric_event_payload(channel_events, channel_total_samples);
+          event_sample_base += channel_total_samples;
+        }
+
+        if ( descriptor_index != descriptors.size() )
+        {
+          throw std::runtime_error("invalid IMC2 numeric event metadata: trailing descriptors were not assigned to a channel");
+        }
+      }
+
       void generate_channel_env()
       {
         channels_.clear();
@@ -148,6 +258,49 @@ namespace imc
         chnenv.reset();
 
         imc::component_env *compenv_ptr = nullptr;
+
+        auto finalize_channel = [&]()
+        {
+          if ( chnenv.CNuuid_.empty() )
+          {
+            return;
+          }
+
+          chnenv.uuid_ = chnenv.CNuuid_;
+
+          if ( chnenv.CSuuid_.empty() )
+          {
+            for ( imc::block blkCS: rawblocks_ )
+            {
+              if ( blkCS.get_key().name_ == "CS"
+                && blkCS.get_begin() > static_cast<unsigned long int>(stol(chnenv.uuid_)) )
+              {
+                chnenv.CSuuid_ = blkCS.get_uuid();
+              }
+            }
+          }
+
+          const std::string channel_uuid = chnenv.CNuuid_;
+          channels_.insert( std::pair<std::string,imc::channel>
+            (channel_uuid,imc::channel(chnenv,&mapblocks_,buffer_))
+          );
+          channel_order_.push_back(channel_uuid);
+
+          chnenv.CNuuid_.clear();
+
+          chnenv.CBuuid_.clear();
+          chnenv.CGuuid_.clear();
+          chnenv.CIuuid_.clear();
+          chnenv.CTuuid_.clear();
+          chnenv.CSuuid_.clear();
+          chnenv.Cvuuid_.clear();
+          chnenv.CVuuid_.clear();
+
+          chnenv.compenv1_.reset();
+          chnenv.compenv2_.reset();
+
+          compenv_ptr = nullptr;
+        };
 
         for ( imc::block blk: rawblocks_ )
         {
@@ -160,6 +313,8 @@ namespace imc
           else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CN" ) chnenv.CNuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CS" ) chnenv.CSuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "Cv" ) chnenv.Cvuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CV" ) chnenv.CVuuid_ = blk.get_uuid();
 
           else if ( blk.get_key().name_ == "CC" )
           {
@@ -188,38 +343,9 @@ namespace imc
           if ( !chnenv.CNuuid_.empty() )
           {
             if ( blk.get_key().name_ == "CB" || blk.get_key().name_ == "CG"
-              || blk.get_key().name_ == "CI" || blk.get_key().name_ == "CT"
-              || blk.get_key().name_ == "CS" )
+              || blk.get_key().name_ == "CI" || blk.get_key().name_ == "CT" )
             {
-              chnenv.uuid_ = chnenv.CNuuid_;
-
-              if ( chnenv.CSuuid_.empty() ) {
-                for ( imc::block blkCS: rawblocks_ ) {
-                  if ( blkCS.get_key().name_ == "CS"
-                    && blkCS.get_begin() > (unsigned long int)stol(chnenv.uuid_) ) {
-                    chnenv.CSuuid_ = blkCS.get_uuid();
-                  }
-                }
-              }
-
-              const std::string channel_uuid = chnenv.CNuuid_;
-              channels_.insert( std::pair<std::string,imc::channel>
-                (channel_uuid,imc::channel(chnenv,&mapblocks_,buffer_))
-              );
-              channel_order_.push_back(channel_uuid);
-
-              chnenv.CNuuid_.clear();
-
-              chnenv.CBuuid_.clear();
-              chnenv.CGuuid_.clear();
-              chnenv.CIuuid_.clear();
-              chnenv.CTuuid_.clear();
-              chnenv.CSuuid_.clear();
-
-              chnenv.compenv1_.reset();
-              chnenv.compenv2_.reset();
-
-              compenv_ptr = nullptr;
+              finalize_channel();
             }
           }
 
@@ -228,6 +354,9 @@ namespace imc
           else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
         }
+
+        finalize_channel();
+        finalize_numeric_event_channels();
       }
 
     public:

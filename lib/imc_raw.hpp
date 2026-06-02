@@ -22,14 +22,24 @@ namespace imc
 {
   struct channel_events
   {
+    bool numeric = false;
     std::vector<double> timestamps;
     std::vector<std::string> texts;
+    std::vector<unsigned long int> counts;
+    std::vector<double> xstarts;
+    std::vector<double> xstepwidths;
+    std::vector<double> yvalues;
   };
 
   struct channel_event_chunk
   {
+    bool numeric = false;
     std::vector<double> timestamps;
     std::vector<std::string> texts;
+    std::vector<unsigned long int> counts;
+    std::vector<double> xstarts;
+    std::vector<double> xstepwidths;
+    std::vector<double> yvalues;
     unsigned long int start = 0;
     unsigned long int count = 0;
   };
@@ -51,6 +61,88 @@ namespace imc
     file_format format_ = file_format::imc2;
     imc::imc2::dataset imc2_dataset_;
     imc::imc3::dataset imc3_dataset_;
+
+    template<typename ReadTsaFn, typename ReadNumericFn, typename ReadNumericValuesFn>
+    static channel_events build_channel_events(unsigned long int total,
+                                               ReadTsaFn&& read_tsa,
+                                               ReadNumericFn&& read_numeric,
+                                               ReadNumericValuesFn&& read_numeric_values,
+                                               bool tsa_channel)
+    {
+      channel_events events;
+      if ( tsa_channel )
+      {
+        std::vector<imc::tsa_event> decoded_events = read_tsa(0, total);
+        events.timestamps.reserve(decoded_events.size());
+        events.texts.reserve(decoded_events.size());
+        for ( const imc::tsa_event& event : decoded_events )
+        {
+          events.timestamps.push_back(event.timestamp);
+          events.texts.push_back(event.text);
+        }
+        return events;
+      }
+
+      events.numeric = true;
+      std::vector<imc::numeric_event_descriptor> decoded_events = read_numeric(0, total);
+      events.timestamps.reserve(decoded_events.size());
+      events.counts.reserve(decoded_events.size());
+      events.xstarts.reserve(decoded_events.size());
+      events.xstepwidths.reserve(decoded_events.size());
+      for ( const imc::numeric_event_descriptor& event : decoded_events )
+      {
+        events.timestamps.push_back(event.timestamp);
+        events.counts.push_back(event.count);
+        events.xstarts.push_back(event.xstart);
+        events.xstepwidths.push_back(event.xstepwidth);
+        std::vector<double> yvalues = read_numeric_values(event.start, event.count);
+        events.yvalues.insert(events.yvalues.end(), yvalues.begin(), yvalues.end());
+      }
+      return events;
+    }
+
+    template<typename ReadTsaFn, typename ReadNumericFn, typename ReadNumericValuesFn>
+    static channel_event_chunk build_channel_event_chunk(unsigned long int start,
+                                                         unsigned long int count,
+                                                         ReadTsaFn&& read_tsa,
+                                                         ReadNumericFn&& read_numeric,
+                                                         ReadNumericValuesFn&& read_numeric_values,
+                                                         bool tsa_channel)
+    {
+      channel_event_chunk chunk;
+      chunk.start = start;
+      if ( tsa_channel )
+      {
+        std::vector<imc::tsa_event> events = read_tsa(start, count);
+        chunk.count = static_cast<unsigned long int>(events.size());
+        chunk.timestamps.reserve(events.size());
+        chunk.texts.reserve(events.size());
+        for ( const imc::tsa_event& event : events )
+        {
+          chunk.timestamps.push_back(event.timestamp);
+          chunk.texts.push_back(event.text);
+        }
+        return chunk;
+      }
+
+      chunk.numeric = true;
+      std::vector<imc::numeric_event_descriptor> events = read_numeric(start, count);
+      chunk.count = static_cast<unsigned long int>(events.size());
+      chunk.timestamps.reserve(events.size());
+      chunk.counts.reserve(events.size());
+      chunk.xstarts.reserve(events.size());
+      chunk.xstepwidths.reserve(events.size());
+      for ( const imc::numeric_event_descriptor& event : events )
+      {
+        chunk.timestamps.push_back(event.timestamp);
+        chunk.counts.push_back(event.count);
+        chunk.xstarts.push_back(event.xstart);
+        chunk.xstepwidths.push_back(event.xstepwidth);
+        std::vector<double> yvalues = read_numeric_values(event.start, event.count);
+        chunk.yvalues.insert(chunk.yvalues.end(), yvalues.begin(), yvalues.end());
+      }
+      return chunk;
+    }
 
   public:
 
@@ -193,6 +285,16 @@ namespace imc
       return imc2_dataset_.get_channel_numeric_type(uuid);
     }
 
+    bool is_event_channel(std::string uuid)
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channel(uuid).is_event_channel();
+      }
+
+      return imc2_dataset_.get_channel(uuid).is_event_channel();
+    }
+
     // read a chunk of channel data
     channel_chunk read_channel_chunk(std::string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
@@ -206,39 +308,74 @@ namespace imc
 
     channel_events get_channel_events(std::string uuid)
     {
-      unsigned long int total = get_channel_length(uuid);
-      std::vector<imc::tsa_event> decoded_events = format_ == file_format::imc3
-        ? imc3_dataset_.read_channel_events(uuid, 0, total)
-        : imc2_dataset_.read_channel_events(uuid, 0, total);
-
-      channel_events events;
-      events.timestamps.reserve(decoded_events.size());
-      events.texts.reserve(decoded_events.size());
-      for ( const imc::tsa_event& event : decoded_events )
+      if ( format_ == file_format::imc3 )
       {
-        events.timestamps.push_back(event.timestamp);
-        events.texts.push_back(event.text);
+        const imc::imc3::channel& channel = imc3_dataset_.get_channel(uuid);
+        if ( !channel.is_event_channel() )
+        {
+          throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
+        }
+
+        unsigned long int total = get_channel_length(uuid);
+        return build_channel_events(
+          total,
+          [&](unsigned long int start, unsigned long int count) { return channel.read_tsa_events(start, count); },
+          [&](unsigned long int start, unsigned long int count) { return channel.read_numeric_events(start, count); },
+          [&](unsigned long int start, unsigned long int count) { return channel.read_numeric_event_y_values(start, count); },
+          channel.is_tsa_channel()
+        );
       }
-      return events;
+
+      imc::channel channel = imc2_dataset_.get_channel(uuid);
+      if ( !channel.is_event_channel() )
+      {
+        throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
+      }
+
+      unsigned long int total = get_channel_length(uuid);
+      return build_channel_events(
+        total,
+        [&](unsigned long int start, unsigned long int count) { return channel.read_tsa_events(start, count); },
+        [&](unsigned long int start, unsigned long int count) { return channel.read_numeric_events(start, count); },
+        [&](unsigned long int start, unsigned long int count) { return channel.read_numeric_event_y_values(start, count); },
+        channel.is_tsa_channel()
+      );
     }
 
     channel_event_chunk read_channel_event_chunk(std::string uuid, unsigned long int start, unsigned long int count)
     {
-      std::vector<imc::tsa_event> events = format_ == file_format::imc3
-        ? imc3_dataset_.read_channel_events(uuid, start, count)
-        : imc2_dataset_.read_channel_events(uuid, start, count);
-
-      channel_event_chunk chunk;
-      chunk.start = start;
-      chunk.count = static_cast<unsigned long int>(events.size());
-      chunk.timestamps.reserve(events.size());
-      chunk.texts.reserve(events.size());
-      for ( const imc::tsa_event& event : events )
+      if ( format_ == file_format::imc3 )
       {
-        chunk.timestamps.push_back(event.timestamp);
-        chunk.texts.push_back(event.text);
+        const imc::imc3::channel& channel = imc3_dataset_.get_channel(uuid);
+        if ( !channel.is_event_channel() )
+        {
+          throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
+        }
+
+        return build_channel_event_chunk(
+          start,
+          count,
+          [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_tsa_events(event_start, event_count); },
+          [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_numeric_events(event_start, event_count); },
+          [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_numeric_event_y_values(event_start, event_count); },
+          channel.is_tsa_channel()
+        );
       }
-      return chunk;
+
+      imc::channel channel = imc2_dataset_.get_channel(uuid);
+      if ( !channel.is_event_channel() )
+      {
+        throw std::runtime_error("channel is numeric; use read_channel_chunk() instead");
+      }
+
+      return build_channel_event_chunk(
+        start,
+        count,
+        [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_tsa_events(event_start, event_count); },
+        [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_numeric_events(event_start, event_count); },
+        [&](unsigned long int event_start, unsigned long int event_count) { return channel.read_numeric_event_y_values(event_start, event_count); },
+        channel.is_tsa_channel()
+      );
     }
 
     // print single specific channel

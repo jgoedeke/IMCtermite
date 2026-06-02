@@ -27,23 +27,28 @@ from tests.sample_manifest import (
     BASIC_SAMPLE_INFO_CASES,
     DATASET_A_DIR as DATASET_A,
     DATASET_B_DIR as DATASET_B,
+    EVENTS_DIR,
     IMC3_DIR,
     IMC3_METADATA_SAMPLES,
     IMC3_PARITY_SAMPLES,
     KNOWN_CHANNEL_VALUE_CASES,
     KNOWN_VALUE_CASES,
+    MIXED_MULTI_EVENT_SAMPLE_CASES,
+    MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES,
     RAW_SCALED_INVARIANT_CHANNEL_CASES,
     SANITIZED_IMC3_DATA_SAMPLES,
     SANITIZED_IMC3_SAMPLES,
     SANITIZED_SINGLE_TO_BUNDLE,
     SAMPLES_DIR,
+    SINGLE_NUMERIC_EVENT_EDGE_SAMPLES,
+    SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES,
+    SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     SUPPORTED_TSA_EVENT_SAMPLES,
     TSA_DIR,
     UNIFORM_X_INVARIANT_CHANNEL_CASES,
-    UNSUPPORTED_TSA_EVENT_SAMPLES,
     require_sample,
-    iter_supported_sample_files,
+    iter_sample_files,
 )
 
 try:
@@ -379,13 +384,6 @@ class TestTSASupport:
         assert len(events["texts"]) == len(events["timestamps"])
         assert_tsa_texts_and_timestamps(sample_name, events["texts"], events["timestamps"])
 
-    @pytest.mark.parametrize("sample_name,error_pattern", UNSUPPORTED_TSA_EVENT_SAMPLES)
-    def test_new_event_samples_report_currently_unsupported_modes(self, sample_name, error_pattern):
-        sample = require_sample(TSA_DIR / sample_name)
-
-        with pytest.raises(RuntimeError, match=error_pattern):
-            ImcTermite(str(sample).encode())
-
     def test_get_channel_events_rejects_numeric_channels(self):
         sample_file = require_sample(DATASET_A / "datasetA_1.raw")
 
@@ -410,6 +408,153 @@ class TestTSASupport:
         assert rows[2][1] == "hello"
         assert float(rows[3][0]) == 40.0
         assert rows[3][1] == "0123456789"
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_length",
+        SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES + SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
+    )
+    def test_imc_numeric_event_metadata_listing(self, sample_name, expected_length):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert len(channels) == 1
+        assert channels[0]["channel_type"] == "event"
+        assert channels[0]["datatype"] == "7"
+        assert channels[0]["group"]["name"] == "Signal"
+        assert imc.get_channel_length(channels[0]["uuid"]) == expected_length
+
+    @pytest.mark.parametrize(
+        "sample_name",
+        ["imc2_event_numeric_varied_metadata.dat", "imc3_event_numeric_varied_metadata.dat"],
+    )
+    def test_imc_numeric_varied_metadata_event_payloads(self, sample_name):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        events = imc.get_channel_events(channel["uuid"])
+
+        assert list(events.keys()) == ["events"]
+        assert [len(event["y"]) for event in events["events"]] == [300, 37, 1024]
+        assert_exact_allclose(
+            np.array([event["timestamp"] for event in events["events"]]),
+            np.array([1464782400.0, 1464783300.0, 1464784200.0]),
+        )
+        assert_exact_allclose(
+            np.array([event["x"][0] for event in events["events"]]),
+            np.array([-0.05, 1.25, -2.0]),
+        )
+        assert_exact_allclose(
+            np.array([event["x"][1] - event["x"][0] for event in events["events"]]),
+            np.array([0.001, 0.01, 0.0005]),
+        )
+
+    @pytest.mark.parametrize(
+        "sample_name",
+        ["imc2_event_numeric_varied_metadata.dat", "imc3_event_numeric_varied_metadata.dat"],
+    )
+    def test_imc_numeric_event_get_channel_data_matches_event_api(self, sample_name):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        from_data = imc.get_channel_data(channel["uuid"], include_x=True)
+        from_events = imc.get_channel_events(channel["uuid"])
+
+        assert list(from_data.keys()) == ["events"]
+        assert len(from_data["events"]) == len(from_events["events"])
+        for data_event, api_event in zip(from_data["events"], from_events["events"]):
+            assert data_event["timestamp"] == api_event["timestamp"]
+            assert data_event["xstart"] == api_event["xstart"]
+            assert data_event["xstepwidth"] == api_event["xstepwidth"]
+            assert_exact_allclose(data_event["x"], api_event["x"])
+            assert_exact_allclose(data_event["y"], api_event["y"])
+
+    @pytest.mark.parametrize(
+        "sample_name",
+        ["imc2_mixed_numeric_and_event_channel.dat", "imc3_mixed_numeric_and_event_channel.dat"],
+    )
+    def test_imc_mixed_numeric_and_event_channels_stay_distinct(self, sample_name):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["channel_type"] for channel in channels] == ["numeric", "event"]
+        assert [channel["group"]["name"] for channel in channels] == ["Temperature", "Alarm"]
+
+        numeric_data = imc.get_channel_data(channels[0]["uuid"], include_x=True)
+        event_data = imc.get_channel_events(channels[1]["uuid"])
+
+        assert list(numeric_data.keys()) == ["start", "y", "x"]
+        assert len(event_data["events"]) == 2
+        assert [len(event["y"]) for event in event_data["events"]] == [12, 7]
+
+    @pytest.mark.parametrize("sample_name,expected_group,expected_length", SINGLE_NUMERIC_EVENT_EDGE_SAMPLES)
+    def test_imc_numeric_single_event_samples_parse_as_events(self, sample_name, expected_group, expected_length):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert len(channels) == 1
+        assert channels[0]["channel_type"] == "event"
+        assert channels[0]["group"]["name"] == expected_group
+        assert imc.get_channel_length(channels[0]["uuid"]) == expected_length
+
+        events = imc.get_channel_events(channels[0]["uuid"])["events"]
+        assert len(events) == 1
+        assert len(events[0]["y"]) == 1
+        assert events[0]["xstart"] == 0.0
+        assert events[0]["xstepwidth"] == 1.0
+        assert_exact_allclose(events[0]["x"], np.array([0.0]))
+
+    @pytest.mark.parametrize("sample_name,expected_groups,expected_event_counts", MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES)
+    def test_imc_multiple_numeric_event_channels_stay_separate(self, sample_name, expected_groups, expected_event_counts):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["channel_type"] for channel in channels] == ["event", "event"]
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+        assert [imc.get_channel_length(channel["uuid"]) for channel in channels] == expected_event_counts
+
+        event_lengths = [
+            [len(event["y"]) for event in imc.get_channel_events(channel["uuid"])["events"]]
+            for channel in channels
+        ]
+        assert event_lengths == [[16, 9], [11, 7, 13]]
+
+    @pytest.mark.parametrize(
+        "sample_name,expected_groups,expected_types,_expected_lengths",
+        MIXED_MULTI_EVENT_SAMPLE_CASES,
+    )
+    def test_imc_mixed_numeric_and_multiple_event_channels_stay_distinct(
+        self,
+        sample_name,
+        expected_groups,
+        expected_types,
+        _expected_lengths,
+    ):
+        sample = require_sample(EVENTS_DIR / sample_name)
+
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=False)
+
+        assert [channel["channel_type"] for channel in channels] == expected_types
+        assert [channel["group"]["name"] for channel in channels] == expected_groups
+
+        numeric_data = imc.get_channel_data(channels[0]["uuid"], include_x=True)
+        alarm_events = imc.get_channel_events(channels[1]["uuid"])
+        burst_events = imc.get_channel_events(channels[2]["uuid"])
+
+        assert list(numeric_data.keys()) == ["start", "y", "x"]
+        assert [len(event["y"]) for event in alarm_events["events"]] == [5, 8]
+        assert [len(event["y"]) for event in burst_events["events"]] == [6, 4]
 
 
 class TestJsonEscaping:
@@ -526,7 +671,7 @@ class TestChunkedNumpy:
         """Verify chunked iteration against get_channels for all samples"""
         
         # Get all .raw and .dat files recursively
-        raw_files = iter_supported_sample_files()
+        raw_files = iter_sample_files()
         
         for raw_file in raw_files:
             # print(f"Testing {raw_file.name}")
@@ -539,8 +684,23 @@ class TestChunkedNumpy:
                 for ch_ref in channels_ref:
                     uuid = ch_ref['uuid'].encode('utf-8')
                     if 'textdata' in ch_ref:
-                        with pytest.raises(RuntimeError, match="TSA event streaming"):
+                        with pytest.raises(RuntimeError, match="event channel streaming"):
                             list(imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100, mode="scaled"))
+                        continue
+                    if 'events' in ch_ref:
+                        with pytest.raises(RuntimeError, match="event channel streaming"):
+                            list(imc.iter_channel_numpy(uuid, include_x=True, chunk_rows=100, mode="scaled"))
+
+                        streamed_chunks = list(imc.iter_channel_events(uuid, chunk_rows=100))
+                        streamed_events = [event for chunk in streamed_chunks for event in chunk['events']]
+
+                        assert len(streamed_events) == len(ch_ref['events']), f"Event count mismatch in {raw_file.name} channel {uuid}"
+                        for streamed_event, ref_event in zip(streamed_events, ch_ref['events']):
+                            assert streamed_event['timestamp'] == ref_event['timestamp'], f"Event timestamp mismatch in {raw_file.name} channel {uuid}"
+                            assert streamed_event['xstart'] == ref_event['xstart'], f"Event xstart mismatch in {raw_file.name} channel {uuid}"
+                            assert streamed_event['xstepwidth'] == ref_event['xstepwidth'], f"Event xstepwidth mismatch in {raw_file.name} channel {uuid}"
+                            assert np.allclose(streamed_event['x'], ref_event['xdata'], equal_nan=True), f"Event x data mismatch in {raw_file.name} channel {uuid}"
+                            assert np.allclose(streamed_event['y'], ref_event['ydata'], equal_nan=True), f"Event y data mismatch in {raw_file.name} channel {uuid}"
                         continue
                     
                     # Test with include_x=True
@@ -601,7 +761,7 @@ class TestChunkedNumpy:
 
     def test_datatype11_scaled_matches_raw(self):
         """Datatype 11 (digital) must not apply CR scaling in scaled mode."""
-        raw_files = iter_supported_sample_files()
+        raw_files = iter_sample_files()
 
         checked = 0
         for raw_file in raw_files:
@@ -716,13 +876,13 @@ class TestMultipleFiles:
 
     def test_basic_sample_manifest_covers_all_supported_files(self):
         supported_files = {
-            sample_file.relative_to(SAMPLES_DIR).as_posix() for sample_file in iter_supported_sample_files()
+            sample_file.relative_to(SAMPLES_DIR).as_posix() for sample_file in iter_sample_files()
         }
         assert set(BASIC_SAMPLE_INFO_CASES) == supported_files
     
     def test_process_all_sample_files(self):
         """Should process all .raw and .dat files in samples directory (metadata only)"""
-        files_to_test = iter_supported_sample_files()
+        files_to_test = iter_sample_files()
         
         successful = 0
         failed = []
@@ -743,7 +903,7 @@ class TestMultipleFiles:
     
     def test_extract_all_sample_files_with_data(self):
         """Should fully extract all .raw and .dat files with data"""
-        files_to_test = iter_supported_sample_files()
+        files_to_test = iter_sample_files()
         
         successful = 0
         failed = []
@@ -759,6 +919,7 @@ class TestMultipleFiles:
                     for channel in channels:
                         if ('xdata' in channel and len(channel['xdata']) > 0) or \
                                     ('ydata' in channel and len(channel['ydata']) > 0) or \
+                                    ('events' in channel and len(channel['events']) > 0) or \
                                     ('textdata' in channel and len(channel['textdata']) > 0):
                             has_data = True
                             break

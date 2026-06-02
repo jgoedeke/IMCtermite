@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 DATASET_A_DIR = SAMPLES_DIR / "datasetA"
 DATASET_B_DIR = SAMPLES_DIR / "datasetB"
+EVENTS_DIR = SAMPLES_DIR / "events"
 IMC3_DIR = SAMPLES_DIR / "imc3"
 TSA_DIR = SAMPLES_DIR / "tsa"
 
@@ -61,6 +62,31 @@ SUPPORTED_TSA_EVENT_SAMPLES = [
 
 SUPPORTED_TSA_EVENT_SAMPLE_NAMES = [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES]
 
+SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES = [
+    ("imc2_event_numeric_many_small_events.dat", 24),
+    ("imc2_event_numeric_varied_metadata.dat", 3),
+]
+
+SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES = [
+    ("imc3_event_numeric_many_small_events.dat", 24),
+    ("imc3_event_numeric_varied_metadata.dat", 3),
+]
+
+SINGLE_NUMERIC_EVENT_EDGE_SAMPLES = [
+    ("imc2_event_numeric_single_minimal.dat", "SingleEvent", 1),
+    ("imc3_event_numeric_single_minimal.dat", "SingleEvent", 1),
+]
+
+MULTI_CHANNEL_NUMERIC_EVENT_SAMPLES = [
+    ("imc2_event_numeric_two_channels.dat", ["Temperature", "Pressure"], [2, 3]),
+    ("imc3_event_numeric_two_channels.dat", ["Temperature", "Pressure"], [2, 3]),
+]
+
+MIXED_MULTI_EVENT_SAMPLE_CASES = [
+    ("imc2_event_numeric_two_channels_plus_numeric.dat", ["Speed", "Alarm", "Burst"], ["numeric", "event", "event"], [500, 2, 2]),
+    ("imc3_event_numeric_two_channels_plus_numeric.dat", ["Speed", "Alarm", "Burst"], ["numeric", "event", "event"], [500, 2, 2]),
+]
+
 TSA_PADDING_ESCAPED_TEXTS = [
     "",
     "A",
@@ -76,26 +102,6 @@ TSA_PADDING_ESCAPED_TEXTS = [
 TSA_MULTICLUSTER_TIMESTAMPS = np.concatenate(
     [np.array([0.0, 0.01]), np.array([0.02 + i * 0.01 for i in range(1, 31)]), np.array([0.4])]
 )
-
-UNSUPPORTED_TSA_EVENT_SAMPLES = [
-    ("imc2_event_numeric_many_small_events.dat", r"unknown critical key: Cv1"),
-    ("imc2_event_numeric_varied_metadata.dat", r"unknown critical key: Cv1"),
-    ("imc2_mixed_numeric_and_event_channel.dat", r"unknown critical key: Cv1"),
-    (
-        "imc3_event_numeric_many_small_events.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-    (
-        "imc3_event_numeric_varied_metadata.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-    (
-        "imc3_mixed_numeric_and_event_channel.dat",
-        r"unsupported IMC3 channel flags: multi-event and color-value channels are not implemented",
-    ),
-]
-
-UNSUPPORTED_SAMPLE_PATHS = {TSA_DIR / sample_name for sample_name, _ in UNSUPPORTED_TSA_EVENT_SAMPLES}
 
 
 def _build_basic_sample_info(paths, *, datatypes, channel_types=None, channel_names=None):
@@ -229,6 +235,18 @@ BASIC_SAMPLE_GROUP_NAMES = (
         "sampleB.raw": ["VehicleSpeed_HS"],
         "sample_x_precision.raw": ["Distance_RAD"],
         "imc3/imc3_multi-channel.dat": ["cone", "cone", "cone"],
+        "events/imc2_event_numeric_many_small_events.dat": ["Signal"],
+        "events/imc2_event_numeric_varied_metadata.dat": ["Signal"],
+        "events/imc2_event_numeric_single_minimal.dat": ["SingleEvent"],
+        "events/imc2_event_numeric_two_channels.dat": ["Temperature", "Pressure"],
+        "events/imc2_event_numeric_two_channels_plus_numeric.dat": ["Speed", "Alarm", "Burst"],
+        "events/imc2_mixed_numeric_and_event_channel.dat": ["Temperature", "Alarm"],
+        "events/imc3_event_numeric_many_small_events.dat": ["Signal"],
+        "events/imc3_event_numeric_varied_metadata.dat": ["Signal"],
+        "events/imc3_event_numeric_single_minimal.dat": ["SingleEvent"],
+        "events/imc3_event_numeric_two_channels.dat": ["Temperature", "Pressure"],
+        "events/imc3_event_numeric_two_channels_plus_numeric.dat": ["Speed", "Alarm", "Burst"],
+        "events/imc3_mixed_numeric_and_event_channel.dat": ["Temperature", "Alarm"],
         "tsa/imc2_TsaChannel.dat": ["TsaChannel"],
         "tsa/imc2_tsa_multicluster.dat": ["TsaChannel"],
         "tsa/imc2_tsa_padding_and_escaping.dat": ["TsaChannel"],
@@ -333,6 +351,44 @@ BASIC_SAMPLE_INFO_CASES = _with_basic_group_names((
         ["imc3/imc3_xy_dataset.dat"],
         datatypes=["8"],
         channel_names=["circle"],
+    )
+    | _build_basic_sample_info(
+        [
+            "events/imc2_event_numeric_many_small_events.dat",
+            "events/imc2_event_numeric_varied_metadata.dat",
+            "events/imc2_event_numeric_single_minimal.dat",
+        ],
+        datatypes=["7"],
+        channel_types=["event"],
+    )
+    | _build_basic_sample_info(
+        [
+            "events/imc3_event_numeric_many_small_events.dat",
+            "events/imc3_event_numeric_varied_metadata.dat",
+            "events/imc3_event_numeric_single_minimal.dat",
+        ],
+        datatypes=["7"],
+        channel_types=["event"],
+    )
+    | _build_basic_sample_info(
+        ["events/imc2_mixed_numeric_and_event_channel.dat"],
+        datatypes=["7", "7"],
+        channel_types=["numeric", "event"],
+    )
+    | _build_basic_sample_info(
+        ["events/imc3_mixed_numeric_and_event_channel.dat"],
+        datatypes=["7", "7"],
+        channel_types=["numeric", "event"],
+    )
+    | _build_basic_sample_info(
+        ["events/imc2_event_numeric_two_channels.dat", "events/imc3_event_numeric_two_channels.dat"],
+        datatypes=["7", "7"],
+        channel_types=["event", "event"],
+    )
+    | _build_basic_sample_info(
+        ["events/imc2_event_numeric_two_channels_plus_numeric.dat", "events/imc3_event_numeric_two_channels_plus_numeric.dat"],
+        datatypes=["7", "7", "7"],
+        channel_types=["numeric", "event", "event"],
     )
     | _build_basic_sample_info(
         [
@@ -469,7 +525,3 @@ def iter_sample_files(root: Path = SAMPLES_DIR) -> list[Path]:
         pytest.skip(f"No .raw or .dat files in samples directory: {root}")
 
     return samples
-
-
-def iter_supported_sample_files(root: Path = SAMPLES_DIR) -> list[Path]:
-    return [sample for sample in iter_sample_files(root) if sample not in UNSUPPORTED_SAMPLE_PATHS]
