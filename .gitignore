@@ -48,3 +48,9 @@ python/wheelhouse/
 
 __pycache__/
 .pytest_cache/
+.coverage
+coverage.xml
+native-coverage.txt
+native-coverage.xml
+*.gcda
+*.gcno

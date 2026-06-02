@@ -76,7 +76,7 @@ which may require root permissions.
 ### Python
 
 To integrate the library into a customized ETL toolchain, several python targets
-are available. For a local build that enables you to run the examples, use:
+are available. For a local in-place build that enables you to run the examples, use:
 
 ```
 make python-build
@@ -170,7 +170,11 @@ For large files, you can iterate over channel data in chunks as NumPy arrays. Th
 
 ## Testing
 
-Run end-to-end tests: `make test`
+Prepare the local test environment with `make prepare-test`, then run end-to-end tests with `make test`.
+
+The Python environment is expected to be prepared outside Make and already contain the required build and test dependencies.
+
+To emit the Python wrapper coverage report through the same target, ensure `pytest-cov` is installed and use `make test COVERAGE=1`.
 
 See [tests/README.md](tests/README.md) for details.
 

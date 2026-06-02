@@ -149,6 +149,28 @@ class TestDataIntegrity:
 class TestIMC3Support:
     """Test positive IMC3 loading via the public Python API."""
 
+    @staticmethod
+    def _mutated_imc3_sample(tmp_path, name: str, mutator):
+        source = require_sample(IMC3_DIR / "imc3_sanitized_02.raw")
+        data = bytearray(source.read_bytes())
+        mutator(data)
+        sample = tmp_path / name
+        sample.write_bytes(data)
+        return sample
+
+    @staticmethod
+    def _replace_imc3_token(data: bytearray, old: bytes, new: bytes) -> None:
+        assert len(old) == len(new)
+        offset = data.find(old)
+        assert offset != -1, f"token not found: {old!r}"
+        data[offset:offset + len(old)] = new
+
+    @staticmethod
+    def _cs1_offset(data: bytearray) -> int:
+        offset = data.find(b"|CS1")
+        assert offset != -1, "|CS1 not found"
+        return offset
+
     @pytest.mark.parametrize(
         "imc2_name,imc3_name",
         IMC3_PARITY_SAMPLES,
@@ -214,6 +236,47 @@ class TestIMC3Support:
         )
 
         with pytest.raises(RuntimeError, match="unsupported IMC3 compression"):
+            ImcTermite(str(sample).encode())
+
+    def test_imc3_rejects_unknown_pre_raw_metadata_key(self, tmp_path):
+        sample = self._mutated_imc3_sample(
+            tmp_path,
+            "imc3_bad_pre_raw_key.raw",
+            lambda data: self._replace_imc3_token(data, b"|CP1", b"|ZZ1"),
+        )
+
+        with pytest.raises(RuntimeError, match="unsupported IMC3 pre-raw metadata key"):
+            ImcTermite(str(sample).encode())
+
+    def test_imc3_rejects_unknown_trailing_metadata_key(self, tmp_path):
+        sample = self._mutated_imc3_sample(
+            tmp_path,
+            "imc3_bad_trailing_key.raw",
+            lambda data: self._replace_imc3_token(data, b"|CS1", b"|ZZ1"),
+        )
+
+        with pytest.raises(RuntimeError, match="unsupported IMC3 trailing metadata key"):
+            ImcTermite(str(sample).encode())
+
+    def test_imc3_rejects_summary_envelope_data(self, tmp_path):
+        def mutate(data: bytearray) -> None:
+            offset = self._cs1_offset(data) + 32
+            data[offset:offset + 8] = struct.pack("<Q", 1)
+
+        sample = self._mutated_imc3_sample(tmp_path, "imc3_envelope_summary.raw", mutate)
+
+        with pytest.raises(RuntimeError, match="envelope data is not implemented"):
+            ImcTermite(str(sample).encode())
+
+    def test_imc3_rejects_summary_byte_count_mismatch(self, tmp_path):
+        def mutate(data: bytearray) -> None:
+            offset = self._cs1_offset(data) + 16
+            original = struct.unpack("<Q", data[offset:offset + 8])[0]
+            data[offset:offset + 8] = struct.pack("<Q", original + 8)
+
+        sample = self._mutated_imc3_sample(tmp_path, "imc3_bad_summary_size.raw", mutate)
+
+        with pytest.raises(RuntimeError, match="summary total bytes do not match parsed chunk data"):
             ImcTermite(str(sample).encode())
 
     @pytest.mark.parametrize("sample_name,expected_channel_count", SANITIZED_IMC3_SAMPLES)

@@ -1,4 +1,6 @@
 import sys
+import os
+import shlex
 
 import numpy
 from Cython.Build import cythonize
@@ -11,11 +13,15 @@ compile_args = {
     "win32": ["/EHsc", "/std:c++17"],
 }.get(sys.platform, ["-std=c++17"])
 
+extra_compile_args = compile_args + shlex.split(os.environ.get("IMCTERMITE_EXTRA_COMPILE_ARGS", ""))
+extra_link_args = shlex.split(os.environ.get("IMCTERMITE_EXTRA_LINK_ARGS", ""))
+
 extension = Extension(
     "imctermite._imctermite",
     sources=["python/imctermite/_imctermite.pyx"],
     include_dirs=["lib", numpy.get_include()],
-    extra_compile_args=compile_args,
+    extra_compile_args=extra_compile_args,
+    extra_link_args=extra_link_args,
     define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
 )
 
