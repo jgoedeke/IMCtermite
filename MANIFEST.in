@@ -1,8 +1,9 @@
 include README.md
 include LICENSE
-include python/VERSION
+include VERSION
 include python/imctermite/*.pyx
 include python/imctermite/*.pxd
 include python/imctermite/*.pyi
 include python/imctermite/py.typed
+recursive-include docs *.md
 recursive-include lib *.hpp

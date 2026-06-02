@@ -6,6 +6,16 @@ from libcpp cimport bool
 
 cdef extern from "imc_raw.hpp" namespace "imc":
 
+  cdef struct channel_events:
+    vector[double] timestamps
+    vector[string] texts
+
+  cdef struct channel_event_chunk:
+    vector[double] timestamps
+    vector[string] texts
+    unsigned long int start
+    unsigned long int count
+
   cdef struct channel_chunk:
     vector[unsigned char] x_bytes
     vector[unsigned char] y_bytes
@@ -35,6 +45,12 @@ cdef extern from "imc_raw.hpp" namespace "imc":
 
     # read a chunk of channel data
     channel_chunk read_channel_chunk(string uuid, unsigned long int start, unsigned long int count, bool include_x, bool raw_mode) except +
+
+    # read full TSA event payloads
+    channel_events get_channel_events(string uuid) except +
+
+    # read a chunk of TSA event payloads
+    channel_event_chunk read_channel_event_chunk(string uuid, unsigned long int start, unsigned long int count) except +
 
     # print single channel/all channels
     void print_channel(string channeluuid, string outputdir, char delimiter, unsigned long int chunk_size) except +

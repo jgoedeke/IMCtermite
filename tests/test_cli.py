@@ -5,24 +5,70 @@ End-to-end tests for IMCtermite CLI tool
 
 import pytest
 import subprocess
-import sys
-from pathlib import Path
+import csv
 
-PROJECT_ROOT = Path(__file__).parent.parent
-CLI = PROJECT_ROOT / "imctermite"
-if sys.platform == "win32":
-    CLI = CLI.with_suffix(".exe")
-SAMPLES_DIR = PROJECT_ROOT / "samples" / "datasetA"
-IMC3_DIR = PROJECT_ROOT / "samples" / "imc3"
-SANITIZED_IMC3_SAMPLES = [
-    ("imc3_sanitized_01.raw", 1),
-    ("imc3_sanitized_02.raw", 1),
-    ("imc3_sanitized_03.raw", 1),
-    ("imc3_sanitized_04.raw", 1),
-    ("imc3_sanitized_05.raw", 1),
-    ("imc3_sanitized_06.raw", 1),
-    ("imc3_sanitized_bundle.dat", 6),
-]
+from tests.assertions import assert_tsa_csv_rows
+from tests.sample_manifest import (
+    BASIC_SAMPLE_INFO_CASES,
+    CLI_PATH,
+    IMC3_DIR,
+    require_sample,
+    SANITIZED_IMC3_SAMPLES,
+    SAMPLES_DIR,
+    SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
+    TSA_DIR,
+    iter_supported_sample_files,
+)
+
+CLI = CLI_PATH
+DATASET_A_DIR = SAMPLES_DIR / "datasetA"
+
+
+def parse_listchannels_output(output: str) -> list[dict[str, str]]:
+    channels = []
+    current = {}
+
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            if current:
+                channels.append(current)
+                current = {}
+            continue
+
+        if ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        current[key.strip()] = value.strip()
+
+    if current:
+        channels.append(current)
+
+    return channels
+
+
+def get_cli_group_name(channel: dict[str, str]) -> str:
+    group = channel.get("group", "")
+    if not (group.startswith("(") and group.endswith(")")):
+        return ""
+
+    parts = group[1:-1].split(",", 2)
+    if len(parts) < 2:
+        return ""
+
+    return parts[1]
+
+
+def assert_cli_basic_sample_info(output: str, expected: dict) -> None:
+    channels = parse_listchannels_output(output)
+    assert len(channels) == expected["num_channels"]
+    assert [channel.get("channel-type") for channel in channels] == expected["channel_types"]
+    assert [channel.get("datatype") for channel in channels] == expected["datatypes"]
+    if "channel_names" in expected:
+        assert [channel.get("name") for channel in channels] == expected["channel_names"]
+    if "group_names" in expected:
+        assert [get_cli_group_name(channel) for channel in channels] == expected["group_names"]
 
 
 class TestCLIBasics:
@@ -63,9 +109,7 @@ class TestCLIBasics:
     )
     def test_imc3_samples_list_channels(self, sample_name, expected_text):
         """Bundled IMC3 fixtures should list channels successfully."""
-        sample = IMC3_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / sample_name)
 
         result = subprocess.run(
             [str(CLI), str(sample), "--listchannels"],
@@ -79,9 +123,7 @@ class TestCLIBasics:
 
     @pytest.mark.parametrize("sample_name,expected_channels", SANITIZED_IMC3_SAMPLES)
     def test_sanitized_imc3_files_list_channels(self, sample_name, expected_channels):
-        sample = IMC3_DIR / sample_name
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
+        sample = require_sample(IMC3_DIR / sample_name)
 
         result = subprocess.run(
             [str(CLI), str(sample), "--listchannels"],
@@ -93,6 +135,23 @@ class TestCLIBasics:
         assert result.returncode == 0
         assert result.stdout.count("uuid:") == expected_channels
 
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_samples_list_channels(self, sample_name):
+        sample = require_sample(TSA_DIR / sample_name)
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--listchannels"],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        assert "channel-type:       event" in result.stdout
+        assert "datatype:           10" in result.stdout
+        assert "xname:              time" in result.stdout
+        assert "TsaChannel" in result.stdout
+
 
 class TestChannelOperations:
     """Test channel listing and data extraction"""
@@ -100,10 +159,7 @@ class TestChannelOperations:
     @pytest.fixture
     def sample_file(self):
         """Get path to sample file"""
-        sample = SAMPLES_DIR / "datasetA_1.raw"
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
-        return sample
+        return require_sample(DATASET_A_DIR / "datasetA_1.raw")
     
     def test_list_channels(self, sample_file):
         """Should list channels with metadata"""
@@ -133,10 +189,7 @@ class TestCSVOutput:
     @pytest.fixture
     def sample_file(self):
         """Get path to sample file"""
-        sample = SAMPLES_DIR / "datasetA_1.raw"
-        if not sample.exists():
-            pytest.skip(f"Sample file not found: {sample}")
-        return sample
+        return require_sample(DATASET_A_DIR / "datasetA_1.raw")
     
     def test_generate_csv_output(self, sample_file, tmp_path):
         """Should generate CSV files"""
@@ -195,26 +248,34 @@ class TestCSVOutput:
         first_line = content.split('\n')[0]
         assert ';' in first_line, "Should use semicolon delimiter"
 
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_csv_output_contains_timestamp_and_text(self, sample_name, tmp_path):
+        sample = require_sample(TSA_DIR / sample_name)
+
+        output_dir = tmp_path / "tsa_csv_output"
+        output_dir.mkdir()
+
+        result = subprocess.run(
+            [str(CLI), str(sample), "--output", str(output_dir)],
+            capture_output=True,
+            text=True,
+            errors='replace'
+        )
+
+        assert result.returncode == 0
+        csv_files = list(output_dir.glob("*.csv"))
+        assert len(csv_files) == 1
+        rows = list(csv.reader(csv_files[0].read_text().splitlines()))
+        assert_tsa_csv_rows(sample_name, rows)
+
 
 class TestMultipleFiles:
     """Test processing multiple sample files"""
     
     def test_process_all_sample_files(self):
         """Should successfully process all .raw and .dat files in samples directory (list channels)"""
-        samples_root = SAMPLES_DIR.parent
-        if not samples_root.exists():
-            pytest.skip(f"Samples directory not found: {samples_root}")
-        
-        # Get all .raw and .dat files recursively
-        samples = sorted(list(samples_root.glob("*.raw")) + 
-                        list(samples_root.glob("*.dat")) +
-                        list(samples_root.glob("**/*.raw")) + 
-                        list(samples_root.glob("**/*.dat")))
-        # Remove duplicates
-        samples = sorted(set(samples))
-        
-        if len(samples) == 0:
-            pytest.skip("No .raw or .dat files in samples directory")
+        samples_root = SAMPLES_DIR
+        samples = iter_supported_sample_files(samples_root)
         
         failed = []
         for sample in samples:
@@ -226,6 +287,14 @@ class TestMultipleFiles:
             )
             if result.returncode != 0:
                 failed.append(f"{sample.relative_to(samples_root)}: exit code {result.returncode}")
+                continue
+
+            try:
+                relative_path = sample.relative_to(samples_root).as_posix()
+                expected = BASIC_SAMPLE_INFO_CASES[relative_path]
+                assert_cli_basic_sample_info(result.stdout, expected)
+            except Exception as exc:
+                failed.append(f"{sample.relative_to(samples_root)}: {exc}")
         
         assert len(failed) == 0, f"Failed to process {len(failed)}/{len(samples)} files: {failed}"
     
@@ -234,19 +303,8 @@ class TestMultipleFiles:
         import tempfile
         import shutil
         
-        samples_root = SAMPLES_DIR.parent
-        if not samples_root.exists():
-            pytest.skip(f"Samples directory not found: {samples_root}")
-        
-        # Get all .raw and .dat files recursively
-        samples = sorted(list(samples_root.glob("*.raw")) + 
-                        list(samples_root.glob("*.dat")) +
-                        list(samples_root.glob("**/*.raw")) + 
-                        list(samples_root.glob("**/*.dat")))
-        samples = sorted(set(samples))
-        
-        if len(samples) == 0:
-            pytest.skip("No .raw or .dat files in samples directory")
+        samples_root = SAMPLES_DIR
+        samples = iter_supported_sample_files(samples_root)
         
         # Create temp directory for output
         temp_dir = tempfile.mkdtemp()
@@ -272,9 +330,7 @@ class TestExitCodes:
     
     def test_success_exit_code(self):
         """Should return 0 on success"""
-        sample = SAMPLES_DIR / "datasetA_1.raw"
-        if not sample.exists():
-            pytest.skip("Sample file not found")
+        sample = require_sample(DATASET_A_DIR / "datasetA_1.raw")
         
         result = subprocess.run(
             [str(CLI), str(sample), "--listchannels"],

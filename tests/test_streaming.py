@@ -5,17 +5,24 @@ Tests for the new streaming/chunking functionality in IMCtermite
 
 import pytest
 import numpy as np
-from pathlib import Path
+
+from tests.assertions import (
+    assert_chunk_start_progression,
+    assert_event_chunks_match_eager,
+    assert_streamed_numeric_matches_eager,
+)
+from tests.sample_manifest import (
+    DATASET_A_DIR as DATASET_A,
+    IMC3_DIR,
+    require_sample,
+    SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
+    TSA_DIR,
+)
 
 try:
     from imctermite import ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
-
-PROJECT_ROOT = Path(__file__).parent.parent
-SAMPLES_DIR = PROJECT_ROOT / "samples"
-DATASET_A = SAMPLES_DIR / "datasetA"
-IMC3_DIR = SAMPLES_DIR / "imc3"
 
 class TestStreaming:
     """Test iter_channel_numpy functionality"""
@@ -23,9 +30,7 @@ class TestStreaming:
     @pytest.fixture
     def imc_instance(self):
         """Create IMC instance with sample file"""
-        sample_file = DATASET_A / "datasetA_1.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
         return ImcTermite(str(sample_file).encode())
 
     @pytest.fixture
@@ -105,41 +110,69 @@ class TestStreaming:
 
     def test_invalid_channel_uuid(self, imc_instance):
         """Test behavior with invalid UUID"""
-        # Depending on implementation, this might raise an error or return empty generator
-        # Based on C++ code: throw std::runtime_error("channel does not exist:" + uuid);
-        # Cython should propagate this as RuntimeError
-        
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="channel does not exist:non-existent-uuid"):
             list(imc_instance.iter_channel_numpy(b"non-existent-uuid"))
 
     def test_imc3_xy_streaming_matches_full_load(self):
         """IMC3 XY fixtures should stream the same x/y values as the eager API."""
-        sample_file = IMC3_DIR / "imc3_xy_dataset.dat"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(IMC3_DIR / "imc3_xy_dataset.dat")
 
         imc = ImcTermite(str(sample_file).encode())
         channel = imc.get_channels(include_data=True)[0]
 
         streamed = list(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=64))
-        streamed_x = np.concatenate([chunk["x"] for chunk in streamed])
-        streamed_y = np.concatenate([chunk["y"] for chunk in streamed])
-
-        np.testing.assert_allclose(streamed_x, np.array(channel["xdata"]), rtol=1e-9, atol=1e-9)
-        np.testing.assert_allclose(streamed_y, np.array(channel["ydata"]), rtol=1e-9, atol=1e-9)
+        assert_streamed_numeric_matches_eager(streamed, channel["xdata"], channel["ydata"])
 
     def test_sanitized_imc3_streaming_matches_full_load(self):
         """Sanitized streamed IMC3 fixtures should stream the same values as the eager API."""
-        sample_file = IMC3_DIR / "imc3_sanitized_02.raw"
-        if not sample_file.exists():
-            pytest.skip(f"Sample file not found: {sample_file}")
+        sample_file = require_sample(IMC3_DIR / "imc3_sanitized_02.raw")
 
         imc = ImcTermite(str(sample_file).encode())
         channel = imc.get_channels(include_data=True)[0]
 
         streamed = list(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=257))
-        streamed_x = np.concatenate([chunk["x"] for chunk in streamed])
-        streamed_y = np.concatenate([chunk["y"] for chunk in streamed])
+        assert_streamed_numeric_matches_eager(streamed, channel["xdata"], channel["ydata"])
 
-        np.testing.assert_allclose(streamed_x, np.array(channel["xdata"]), rtol=1e-9, atol=1e-9)
-        np.testing.assert_allclose(streamed_y, np.array(channel["ydata"]), rtol=1e-9, atol=1e-9)
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_streaming_is_rejected(self, sample_name):
+        sample_file = require_sample(TSA_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        with pytest.raises(RuntimeError, match="TSA event streaming"):
+            next(imc.iter_channel_numpy(channel["uuid"].encode("utf-8"), chunk_rows=16))
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    @pytest.mark.parametrize("chunk_rows", [1, 4])
+    def test_iter_channel_events_matches_eager_api(self, sample_name, chunk_rows):
+        sample_file = require_sample(TSA_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+        eager = imc.get_channel_events(channel["uuid"])
+
+        streamed = list(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=chunk_rows))
+        assert_event_chunks_match_eager(streamed, eager)
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_iter_channel_events_can_skip_timestamps(self, sample_name):
+        sample_file = require_sample(TSA_DIR / sample_name)
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        chunks = list(imc.iter_channel_events(channel["uuid"], include_timestamps=False, chunk_rows=2))
+
+        assert_chunk_start_progression(chunks, "texts")
+        assert [text for chunk in chunks for text in chunk["texts"]] == imc.get_channel_events(channel["uuid"])["texts"]
+        assert all("timestamps" not in chunk for chunk in chunks)
+
+    def test_iter_channel_events_rejects_numeric_channels(self):
+        sample_file = require_sample(DATASET_A / "datasetA_1.raw")
+
+        imc = ImcTermite(str(sample_file).encode())
+        channel = imc.get_channels(include_data=False)[0]
+
+        with pytest.raises(RuntimeError, match="channel is numeric"):
+            next(imc.iter_channel_events(channel["uuid"].encode("utf-8"), chunk_rows=16))

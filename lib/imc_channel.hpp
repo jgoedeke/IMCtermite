@@ -65,6 +65,237 @@ namespace imc
     return escaped;
   }
 
+  struct tsa_event
+  {
+    double timestamp;
+    std::string text;
+  };
+
+  struct tsa_event_descriptor
+  {
+    uint64_t raw_timestamp;
+    size_t text_offset;
+    size_t text_length;
+  };
+
+  struct tsa_index_data
+  {
+    std::vector<unsigned char> logical_stream;
+    std::vector<tsa_event_descriptor> events;
+  };
+
+  inline uint16_t read_tsa_u16(const unsigned char* data)
+  {
+    return static_cast<uint16_t>(data[0])
+      | (static_cast<uint16_t>(data[1]) << 8);
+  }
+
+  inline uint64_t read_tsa_u48(const unsigned char* data)
+  {
+    uint64_t value = 0;
+    for ( int index = 0; index < 6; ++index )
+    {
+      value |= static_cast<uint64_t>(data[index]) << (index * 8);
+    }
+    return value;
+  }
+
+  inline std::string decode_tsa_text(const unsigned char* data, size_t length)
+  {
+    static const char* hex = "0123456789ABCDEF";
+    std::string text;
+    text.reserve(length);
+
+    for ( size_t index = 0; index < length; ++index )
+    {
+      unsigned char value = data[index];
+      switch ( value )
+      {
+        case '\\': text += "\\\\"; break;
+        case '\n': text += "\\n"; break;
+        case '\r': text += "\\r"; break;
+        case '\t': text += "\\t"; break;
+        default:
+          if ( value >= 0x20 && value <= 0x7e )
+          {
+            text.push_back(static_cast<char>(value));
+          }
+          else
+          {
+            text += "\\x";
+            text.push_back(hex[(value >> 4) & 0x0f]);
+            text.push_back(hex[value & 0x0f]);
+          }
+          break;
+      }
+    }
+
+    return text;
+  }
+
+  inline tsa_index_data build_tsa_index(const unsigned char* data, size_t size)
+  {
+    tsa_index_data index;
+    index.logical_stream.reserve(size);
+
+    for ( size_t cluster_start = 0; cluster_start < size; cluster_start += 512 )
+    {
+      size_t remaining = size - cluster_start;
+      if ( remaining < 4 )
+      {
+        throw std::runtime_error("invalid TSA payload: truncated sync header");
+      }
+
+      uint16_t synch_last = read_tsa_u16(data + cluster_start);
+      if ( synch_last > index.logical_stream.size() )
+      {
+        index.logical_stream.clear();
+      }
+      else if ( synch_last > 0 )
+      {
+        index.logical_stream.resize(index.logical_stream.size() - synch_last);
+      }
+
+      size_t cluster_end = (std::min)(cluster_start + static_cast<size_t>(512), size);
+      index.logical_stream.insert(index.logical_stream.end(), data + cluster_start + 4, data + cluster_end);
+    }
+
+    size_t cursor = 0;
+    while ( cursor + 2 <= index.logical_stream.size() )
+    {
+      uint16_t length = read_tsa_u16(index.logical_stream.data() + cursor);
+      if ( length == 0 )
+      {
+        if ( cursor + 4 <= index.logical_stream.size()
+          && read_tsa_u16(index.logical_stream.data() + cursor + 2) == 0 )
+        {
+          cursor += 4;
+          continue;
+        }
+        break;
+      }
+
+      if ( length < 8 )
+      {
+        throw std::runtime_error("invalid TSA payload: sample length shorter than header");
+      }
+
+      size_t padded_length = (length + 3U) & ~static_cast<size_t>(3U);
+      if ( cursor + padded_length > index.logical_stream.size() )
+      {
+        throw std::runtime_error("invalid TSA payload: truncated sample");
+      }
+
+      tsa_event_descriptor descriptor;
+      descriptor.raw_timestamp = read_tsa_u48(index.logical_stream.data() + cursor + 2);
+      descriptor.text_offset = cursor + 8;
+      descriptor.text_length = length - 8;
+      index.events.push_back(descriptor);
+
+      cursor += padded_length;
+    }
+
+    return index;
+  }
+
+  inline std::vector<tsa_event> decode_tsa_event_slice(const std::vector<unsigned char>& logical_stream,
+                                                       const std::vector<tsa_event_descriptor>& descriptors,
+                                                       double factor, double offset,
+                                                       unsigned long int start,
+                                                       unsigned long int count)
+  {
+    if ( count == 0 )
+    {
+      return {};
+    }
+
+    size_t start_index = static_cast<size_t>(start);
+    if ( start_index >= descriptors.size() )
+    {
+      return {};
+    }
+
+    size_t available = descriptors.size() - start_index;
+    size_t actual_count = (std::min)(available, static_cast<size_t>(count));
+
+    std::vector<tsa_event> events;
+    events.reserve(actual_count);
+    for ( size_t index = 0; index < actual_count; ++index )
+    {
+      const tsa_event_descriptor& descriptor = descriptors[start_index + index];
+      tsa_event event;
+      event.timestamp = static_cast<double>(descriptor.raw_timestamp) * factor + offset;
+      event.text = decode_tsa_text(logical_stream.data() + descriptor.text_offset, descriptor.text_length);
+      events.push_back(std::move(event));
+    }
+
+    return events;
+  }
+
+  inline std::vector<tsa_event> decode_tsa_events(const unsigned char* data, size_t size,
+                                                  double factor, double offset)
+  {
+    tsa_index_data index = build_tsa_index(data, size);
+    return decode_tsa_event_slice(index.logical_stream, index.events, factor, offset, 0,
+                                  static_cast<unsigned long int>(index.events.size()));
+  }
+
+  inline std::vector<tsa_event> decode_tsa_events_range(const unsigned char* data, size_t size,
+                                                        double factor, double offset,
+                                                        unsigned long int start,
+                                                        unsigned long int count)
+  {
+    tsa_index_data index = build_tsa_index(data, size);
+    return decode_tsa_event_slice(index.logical_stream, index.events, factor, offset, start, count);
+  }
+
+  inline std::string join_stringvec_json(const std::vector<std::string>& values)
+  {
+    std::stringstream ss;
+    ss << "[";
+    for ( size_t index = 0; index < values.size(); ++index )
+    {
+      if ( index > 0 )
+      {
+        ss << ",";
+      }
+      ss << "\"" << escape_json_string(values[index]) << "\"";
+    }
+    ss << "]";
+    return ss.str();
+  }
+
+  inline std::string escape_csv_field(const std::string& value, char sep)
+  {
+    bool needs_quotes = false;
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for ( char ch : value )
+    {
+      if ( ch == '"' )
+      {
+        escaped += "\"\"";
+        needs_quotes = true;
+      }
+      else
+      {
+        if ( ch == sep || ch == '\n' || ch == '\r' )
+        {
+          needs_quotes = true;
+        }
+        escaped.push_back(ch);
+      }
+    }
+
+    if ( sep == ' ' )
+    {
+      return escaped;
+    }
+
+    return needs_quotes ? std::string("\"") + escaped + std::string("\"") : escaped;
+  }
+
   struct channel_chunk {
     std::vector<unsigned char> x_bytes;
     std::vector<unsigned char> y_bytes;
@@ -405,6 +636,13 @@ namespace imc
     long int addtime_;
     imc::numtype xdatatp_, ydatatp_;
     std::vector<imc::datatype> xdata_, ydata_;
+    std::vector<std::string> textdata_;
+    const unsigned char* tsa_raw_data_;
+    unsigned long int tsa_raw_size_;
+    std::vector<unsigned char> tsa_logical_stream_;
+    std::vector<tsa_event_descriptor> tsa_event_index_;
+    bool tsa_index_built_;
+    bool tsa_loaded_;
 
     // range, factor and offset
     double xfactor_, yfactor_;
@@ -423,6 +661,7 @@ namespace imc
       xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
       xbuffer_offset_(0), ybuffer_offset_(0), xbuffer_size_(0), ybuffer_size_(0),
       addtime_(0), xdatatp_(numtype::unsigned_byte), ydatatp_(numtype::unsigned_byte),
+      tsa_raw_data_(nullptr), tsa_raw_size_(0), tsa_index_built_(false), tsa_loaded_(false),
       xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
       number_of_samples_(0), group_index_(static_cast<unsigned long int>(-1))
     {}
@@ -436,6 +675,7 @@ namespace imc
       xsignbits_(0), xnum_bytes_(0), ysignbits_(0), ynum_bytes_(0),
       xbuffer_offset_(0), ybuffer_offset_(0), xbuffer_size_(0), ybuffer_size_(0),
       addtime_(0), xdatatp_(numtype::unsigned_byte), ydatatp_(numtype::unsigned_byte),
+      tsa_raw_data_(nullptr), tsa_raw_size_(0), tsa_index_built_(false), tsa_loaded_(false),
       xfactor_(1.), yfactor_(1.), xoffset_(0.), yoffset_(0.),
       group_index_(-1)
     {
@@ -509,7 +749,24 @@ namespace imc
         ynum_bytes_ = comp_group1.CP_.bytes_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
-        if (comp_group1.has_cr_ && ydatatp_ != numtype::two_byte_word_digital)
+        if ( ydatatp_ == numtype::timestamp_ascii )
+        {
+          if ( name_.empty() )
+          {
+            name_ = group_name_;
+            yname_ = group_name_;
+          }
+          xname_ = "time";
+          xfactor_ = comp_group1.has_cr_ ? comp_group1.CR_.factor_ : 1.0;
+          xoffset_ = comp_group1.has_cr_ ? comp_group1.CR_.offset_ : comp_group1.Cb_.x0_;
+          xstepwidth_ = xfactor_;
+          xstart_ = xoffset_;
+          xunit_ = comp_group1.has_cr_ ? comp_group1.CR_.unit_ : std::string("");
+          yfactor_ = xfactor_;
+          yoffset_ = xoffset_;
+          yunit_.clear();
+        }
+        else if (comp_group1.has_cr_ && ydatatp_ != numtype::two_byte_word_digital)
         {
           yfactor_ = comp_group1.CR_.factor_;
           yoffset_ = comp_group1.CR_.offset_;
@@ -596,6 +853,95 @@ namespace imc
       chunk_reader_ = std::move(chunk_reader);
     }
 
+    bool is_tsa_channel() const
+    {
+      return ydatatp_ == numtype::timestamp_ascii;
+    }
+
+    std::string channel_type() const
+    {
+      return is_tsa_channel() ? std::string("event") : std::string("numeric");
+    }
+
+    void set_tsa_raw_payload(const unsigned char* data, unsigned long int size)
+    {
+      tsa_raw_data_ = data;
+      tsa_raw_size_ = size;
+      tsa_logical_stream_.clear();
+      tsa_event_index_.clear();
+      tsa_index_built_ = false;
+      tsa_loaded_ = false;
+      xdata_.clear();
+      ydata_.clear();
+      textdata_.clear();
+    }
+
+    void ensure_tsa_index()
+    {
+      if ( !is_tsa_channel() || tsa_index_built_ )
+      {
+        return;
+      }
+
+      if ( tsa_raw_data_ == nullptr )
+      {
+        std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
+        unsigned long int buffstrt = prms[3].begin();
+        tsa_raw_data_ = buffer_ + buffstrt + ybuffer_offset_ + 1;
+        tsa_raw_size_ = ybuffer_size_;
+      }
+
+      tsa_index_data index = build_tsa_index(tsa_raw_data_, tsa_raw_size_);
+      tsa_logical_stream_ = std::move(index.logical_stream);
+      tsa_event_index_ = std::move(index.events);
+      number_of_samples_ = static_cast<unsigned long int>(tsa_event_index_.size());
+      tsa_index_built_ = true;
+    }
+
+    void ensure_tsa_loaded()
+    {
+      if ( !is_tsa_channel() || tsa_loaded_ )
+      {
+        return;
+      }
+
+      ensure_tsa_index();
+
+      std::vector<tsa_event> events = decode_tsa_event_slice(
+        tsa_logical_stream_,
+        tsa_event_index_,
+        xfactor_,
+        xoffset_,
+        0,
+        number_of_samples_
+      );
+      xdata_.clear();
+      ydata_.clear();
+      textdata_.clear();
+      xdata_.reserve(events.size());
+      textdata_.reserve(events.size());
+      for ( const tsa_event& event : events )
+      {
+        xdata_.push_back(imc::datatype(event.timestamp));
+        textdata_.push_back(event.text);
+      }
+      int prec_step = (xfactor_ > 0 ) ? (int)ceil(fabs(log10(xfactor_))) : 10;
+      int prec_start = (fabs(xoffset_) > 0 && fabs(xoffset_) < 1.0) ? (int)ceil(fabs(log10(fabs(xoffset_)))) : 0;
+      xprec_ = (std::max)(prec_step, prec_start);
+      tsa_loaded_ = true;
+    }
+
+    std::vector<tsa_event> read_tsa_events(unsigned long int start, unsigned long int count)
+    {
+      if ( !is_tsa_channel() )
+      {
+        throw std::runtime_error("channel is numeric; use read_chunk() instead");
+      }
+
+      ensure_tsa_index();
+      return decode_tsa_event_slice(tsa_logical_stream_, tsa_event_index_, xfactor_, xoffset_, start, count);
+    }
+
     // initialize metadata without loading data
     void init_metadata()
     {
@@ -607,6 +953,14 @@ namespace imc
 
       // extract (channel dependent) part of buffer
       size_t yCSbuffer_size = ybuffer_size_;
+
+      if ( is_tsa_channel() )
+      {
+        unsigned long int buffstrt = prms[3].begin();
+        set_tsa_raw_payload(buffer_ + buffstrt + ybuffer_offset_ + 1, static_cast<unsigned long int>(yCSbuffer_size));
+        ensure_tsa_loaded();
+        return;
+      }
 
       // determine number of values in buffer
       unsigned long int ynum_values = (unsigned long int)(yCSbuffer_size/(ysignbits_/8));
@@ -657,6 +1011,12 @@ namespace imc
     // convert buffer to actual datatype (loads all data)
     void load_all_data()
     {
+      if ( is_tsa_channel() )
+      {
+        ensure_tsa_loaded();
+        return;
+      }
+
       if ( chunk_reader_ )
       {
         channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
@@ -696,6 +1056,11 @@ namespace imc
 
     channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
     {
+      if ( is_tsa_channel() )
+      {
+        throw std::runtime_error("TSA event streaming via iter_channel_numpy is not implemented");
+      }
+
       if ( chunk_reader_ )
       {
         return chunk_reader_(start, count, include_x, raw_mode);
@@ -960,6 +1325,7 @@ namespace imc
         <<std::setw(width)<<std::left<<"codepage:"<<codepage_<<"\n"
         <<std::setw(width)<<std::left<<"yname:"<<yname_<<"\n"
         <<std::setw(width)<<std::left<<"yunit:"<<yunit_<<"\n"
+        <<std::setw(width)<<std::left<<"channel-type:"<<channel_type()<<"\n"
         <<std::setw(width)<<std::left<<"datatype:"<<ydatatp_<<"\n"
         <<std::setw(width)<<std::left<<"significant bits:"<<ysignbits_<<"\n"
         <<std::setw(width)<<std::left<<"buffer-offset:"<<ybuffer_offset_<<"\n"
@@ -1001,6 +1367,7 @@ namespace imc
               <<"\",\"codepage\":\""<<imc::escape_json_string(codepage_)
               <<"\",\"yname\":\""<<imc::escape_json_string(yname_)
               <<"\",\"yunit\":\""<<imc::escape_json_string(yunit_)
+             <<"\",\"channel_type\":\""<<channel_type()
              <<"\",\"datatype\":\""<<ydatatp_
              <<"\",\"significantbits\":\""<<ysignbits_
              <<"\",\"buffer-size\":\""<<ybuffer_size_
@@ -1015,8 +1382,17 @@ namespace imc
                  <<"\",\"comment\":\""<<imc::escape_json_string(group_comment_)<<"\""<<"}";
       if ( include_data )
       {
-        ss<<",\"ydata\":"<<imc::joinvec<imc::datatype>(ydata_,0,9,true)
-          <<",\"xdata\":"<<imc::joinvec<imc::datatype>(xdata_,0,xprec_,true);
+        if ( is_tsa_channel() )
+        {
+          ensure_tsa_loaded();
+          ss<<",\"xdata\":"<<imc::joinvec<imc::datatype>(xdata_,0,xprec_,true)
+            <<",\"textdata\":"<<imc::join_stringvec_json(textdata_);
+        }
+        else
+        {
+          ss<<",\"ydata\":"<<imc::joinvec<imc::datatype>(ydata_,0,9,true)
+            <<",\"xdata\":"<<imc::joinvec<imc::datatype>(xdata_,0,xprec_,true);
+        }
       }
       // ss<<"\",\"aff. blocks\":\""<<chnenv_.get_json()
       ss<<"}";
@@ -1027,6 +1403,43 @@ namespace imc
     void print(std::string filename, const char sep = ',', int width = 25, int yprec = 9, unsigned long int chunk_size = 100000)
     {
       std::ofstream fou(filename);
+
+      if ( is_tsa_channel() )
+      {
+        ensure_tsa_loaded();
+
+        if ( sep == ' ' )
+        {
+          fou<<std::setw(width)<<std::left<<xname_
+             <<std::setw(width)<<std::left<<yname_<<"\n"
+             <<std::setw(width)<<std::left<<xunit_
+             <<std::setw(width)<<std::left<<yunit_<<"\n";
+        }
+        else
+        {
+          fou<<xname_<<sep<<yname_<<"\n"<<xunit_<<sep<<yunit_<<"\n";
+        }
+
+        for ( size_t index = 0; index < textdata_.size(); ++index )
+        {
+          double timestamp = xdata_[index].as_double();
+          if ( sep == ' ' )
+          {
+            fou<<std::setprecision(xprec_)<<std::fixed
+               <<std::setw(width)<<std::left<<timestamp
+               <<textdata_[index]<<"\n";
+          }
+          else
+          {
+            fou<<std::setprecision(xprec_)<<std::fixed<<timestamp
+               <<sep
+               <<imc::escape_csv_field(textdata_[index], sep)<<"\n";
+          }
+        }
+
+        fou.close();
+        return;
+      }
 
       // header
       if ( sep == ' ' )

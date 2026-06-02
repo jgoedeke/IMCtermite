@@ -20,6 +20,20 @@
 
 namespace imc
 {
+  struct channel_events
+  {
+    std::vector<double> timestamps;
+    std::vector<std::string> texts;
+  };
+
+  struct channel_event_chunk
+  {
+    std::vector<double> timestamps;
+    std::vector<std::string> texts;
+    unsigned long int start = 0;
+    unsigned long int count = 0;
+  };
+
   class raw
   {
     enum class file_format
@@ -188,6 +202,43 @@ namespace imc
       }
 
       return imc2_dataset_.read_channel_chunk(uuid, start, count, include_x, raw_mode);
+    }
+
+    channel_events get_channel_events(std::string uuid)
+    {
+      unsigned long int total = get_channel_length(uuid);
+      std::vector<imc::tsa_event> decoded_events = format_ == file_format::imc3
+        ? imc3_dataset_.read_channel_events(uuid, 0, total)
+        : imc2_dataset_.read_channel_events(uuid, 0, total);
+
+      channel_events events;
+      events.timestamps.reserve(decoded_events.size());
+      events.texts.reserve(decoded_events.size());
+      for ( const imc::tsa_event& event : decoded_events )
+      {
+        events.timestamps.push_back(event.timestamp);
+        events.texts.push_back(event.text);
+      }
+      return events;
+    }
+
+    channel_event_chunk read_channel_event_chunk(std::string uuid, unsigned long int start, unsigned long int count)
+    {
+      std::vector<imc::tsa_event> events = format_ == file_format::imc3
+        ? imc3_dataset_.read_channel_events(uuid, start, count)
+        : imc2_dataset_.read_channel_events(uuid, start, count);
+
+      channel_event_chunk chunk;
+      chunk.start = start;
+      chunk.count = static_cast<unsigned long int>(events.size());
+      chunk.timestamps.reserve(events.size());
+      chunk.texts.reserve(events.size());
+      for ( const imc::tsa_event& event : events )
+      {
+        chunk.timestamps.push_back(event.timestamp);
+        chunk.texts.push_back(event.text);
+      }
+      return chunk;
     }
 
     // print single specific channel

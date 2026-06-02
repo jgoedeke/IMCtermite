@@ -184,6 +184,8 @@ namespace imc
           return 8;
         case imc::numtype::six_byte_unsigned_long:
           return 6;
+        case imc::numtype::timestamp_ascii:
+          return 6;
         default:
           throw std::runtime_error("unsupported IMC3 numeric type: " + std::to_string(static_cast<int>(type)));
       }
@@ -200,10 +202,9 @@ namespace imc
 
     inline imc::numtype parse_numeric_type(uint8_t numeric_format)
     {
-      if ( numeric_format == static_cast<uint8_t>(imc::numtype::timestamp_ascii)
-        || numeric_format == static_cast<uint8_t>(imc::numtype::imc_devices_transitional_recording) )
+      if ( numeric_format == static_cast<uint8_t>(imc::numtype::imc_devices_transitional_recording) )
       {
-        throw std::runtime_error("unsupported IMC3 data type: timestamp/event payloads are not implemented");
+        throw std::runtime_error("unsupported IMC3 data type: imc_devices_transitional_recording is not implemented");
       }
 
       if ( numeric_format < static_cast<uint8_t>(imc::numtype::unsigned_byte)
@@ -283,6 +284,48 @@ namespace imc
       unsigned long int number_of_samples_ = 0;
       unsigned long int group_index_ = 0;
       const unsigned char* raw_data_ = nullptr;
+      mutable std::vector<unsigned char> tsa_logical_stream_;
+      mutable std::vector<imc::tsa_event_descriptor> tsa_event_index_;
+      mutable bool tsa_index_built_ = false;
+
+      bool is_tsa_channel() const
+      {
+        return ydatatp_ == imc::numtype::timestamp_ascii;
+      }
+
+      std::string channel_type() const
+      {
+        return is_tsa_channel() ? std::string("event") : std::string("numeric");
+      }
+
+      void ensure_tsa_index() const
+      {
+        if ( !is_tsa_channel() || tsa_index_built_ )
+        {
+          return;
+        }
+
+        if ( raw_data_ == nullptr )
+        {
+          throw std::runtime_error("TSA raw-data buffer is not available");
+        }
+
+        imc::tsa_index_data index = imc::build_tsa_index(raw_data_ + ybuffer_offset_, ybuffer_size_);
+        tsa_logical_stream_ = std::move(index.logical_stream);
+        tsa_event_index_ = std::move(index.events);
+        tsa_index_built_ = true;
+      }
+
+      std::vector<imc::tsa_event> read_tsa_events(unsigned long int start, unsigned long int count) const
+      {
+        if ( !is_tsa_channel() )
+        {
+          throw std::runtime_error("channel is numeric; use read_chunk() instead");
+        }
+
+        ensure_tsa_index();
+        return imc::decode_tsa_event_slice(tsa_logical_stream_, tsa_event_index_, xfactor_, xoffset_, start, count);
+      }
 
       void append_raw_bytes(std::vector<unsigned char>& out, const unsigned char* base, unsigned long int start,
                             unsigned long int count, int type) const
@@ -367,6 +410,11 @@ namespace imc
 
       channel_chunk read_chunk(unsigned long int start, unsigned long int count, bool include_x, bool raw_mode) const
       {
+        if ( is_tsa_channel() )
+        {
+          throw std::runtime_error("TSA event streaming via iter_channel_numpy is not implemented");
+        }
+
         if ( start >= number_of_samples_ )
         {
           return { {}, {}, start, 0, include_x, 0, 0 };
@@ -445,6 +493,7 @@ namespace imc
            << std::setw(width) << std::left << "codepage:" << codepage_ << "\n"
            << std::setw(width) << std::left << "yname:" << yname_ << "\n"
            << std::setw(width) << std::left << "yunit:" << yunit_ << "\n"
+           << std::setw(width) << std::left << "channel-type:" << channel_type() << "\n"
            << std::setw(width) << std::left << "datatype:" << ydatatp_ << "\n"
            << std::setw(width) << std::left << "significant bits:" << ysignbits_ << "\n"
            << std::setw(width) << std::left << "buffer-size:" << ybuffer_size_ << "\n"
@@ -476,6 +525,7 @@ namespace imc
             << "\",\"codepage\":\"" << imc::escape_json_string(codepage_)
             << "\",\"yname\":\"" << imc::escape_json_string(yname_)
             << "\",\"yunit\":\"" << imc::escape_json_string(yunit_)
+            << "\",\"channel_type\":\"" << channel_type()
            << "\",\"datatype\":\"" << static_cast<int>(ydatatp_)
            << "\",\"significantbits\":\"" << ysignbits_
            << "\",\"buffer-size\":\"" << ybuffer_size_
@@ -491,14 +541,32 @@ namespace imc
 
         if ( include_data )
         {
-          channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
-          const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
-          std::vector<double> y_values(y_ptr, y_ptr + chunk.count);
-          ss << ",\"ydata\":" << imc::joinvec<double>(y_values, 0, 9, true);
+          if ( is_tsa_channel() )
+          {
+            std::vector<imc::tsa_event> events = read_tsa_events(0, number_of_samples_);
+            std::vector<double> x_values;
+            std::vector<std::string> text_values;
+            x_values.reserve(events.size());
+            text_values.reserve(events.size());
+            for ( const imc::tsa_event& event : events )
+            {
+              x_values.push_back(event.timestamp);
+              text_values.push_back(event.text);
+            }
+            ss << ",\"xdata\":" << imc::joinvec<double>(x_values, 0, xprec_, true)
+               << ",\"textdata\":" << imc::join_stringvec_json(text_values);
+          }
+          else
+          {
+            channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
+            const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
+            std::vector<double> y_values(y_ptr, y_ptr + chunk.count);
+            ss << ",\"ydata\":" << imc::joinvec<double>(y_values, 0, 9, true);
 
-          const double* x_ptr = reinterpret_cast<const double*>(chunk.x_bytes.data());
-          std::vector<double> x_values(x_ptr, x_ptr + chunk.count);
-          ss << ",\"xdata\":" << imc::joinvec<double>(x_values, 0, xprec_, true);
+            const double* x_ptr = reinterpret_cast<const double*>(chunk.x_bytes.data());
+            std::vector<double> x_values(x_ptr, x_ptr + chunk.count);
+            ss << ",\"xdata\":" << imc::joinvec<double>(x_values, 0, xprec_, true);
+          }
         }
 
         ss << "}";
@@ -509,6 +577,42 @@ namespace imc
                  unsigned long int chunk_size = 100000) const
       {
         std::ofstream fout(filename);
+
+        if ( is_tsa_channel() )
+        {
+          std::vector<imc::tsa_event> events = read_tsa_events(0, number_of_samples_);
+
+          if ( sep == ' ' )
+          {
+            fout << std::setw(width) << std::left << xname_
+                 << std::setw(width) << std::left << yname_ << "\n"
+                 << std::setw(width) << std::left << xunit_
+                 << std::setw(width) << std::left << yunit_ << "\n";
+          }
+          else
+          {
+            fout << xname_ << sep << yname_ << "\n"
+                 << xunit_ << sep << yunit_ << "\n";
+          }
+
+          for ( const imc::tsa_event& event : events )
+          {
+            if ( sep == ' ' )
+            {
+              fout << std::setprecision(xprec_) << std::fixed
+                   << std::setw(width) << std::left << event.timestamp
+                   << event.text << "\n";
+            }
+            else
+            {
+              fout << std::setprecision(xprec_) << std::fixed << event.timestamp
+                   << sep
+                   << imc::escape_csv_field(event.text, sep) << "\n";
+            }
+          }
+          return;
+        }
+
         if ( sep == ' ' )
         {
           fout << std::setw(width) << std::left << xname_
@@ -895,6 +999,19 @@ namespace imc
           chn.xname_ = "x";
         }
 
+        if ( chn.is_tsa_channel() )
+        {
+          chn.xname_ = "time";
+          chn.xfactor_ = y_component.scale_factor_;
+          chn.xoffset_ = y_component.scale_offset_;
+          chn.yfactor_ = y_component.scale_factor_;
+          chn.yoffset_ = y_component.scale_offset_;
+          chn.xstepwidth_ = chn.xfactor_;
+          chn.xstart_ = chn.xoffset_;
+          chn.xunit_ = xunit.empty() ? y_component.unit_ : xunit;
+          chn.yunit_.clear();
+        }
+
         if ( component_combination == 7 )
         {
           chn.xstepwidth_ = dx * 2.0;
@@ -905,15 +1022,19 @@ namespace imc
           size_t y_bytes_per_sample = bytes_per_numeric_type(y_component.numeric_type_);
           size_t x_bytes_per_sample = has_second_component ? bytes_per_numeric_type(x_component.numeric_type_) : 0;
           size_t bytes_per_sample = y_bytes_per_sample + x_bytes_per_sample;
-          if ( bytes_per_sample == 0 || chunk_bytes % bytes_per_sample != 0 )
+          if ( !chn.is_tsa_channel() && (bytes_per_sample == 0 || chunk_bytes % bytes_per_sample != 0) )
           {
             throw std::runtime_error("invalid IMC3 channel size: raw chunk bytes do not match component widths");
           }
 
           chn.ybuffer_offset_ = *current_raw_offset;
           chn.raw_data_ = nullptr;
-          chn.number_of_samples_ = static_cast<unsigned long int>(chunk_bytes / bytes_per_sample);
-          chn.ybuffer_size_ = static_cast<unsigned long int>(chn.number_of_samples_ * y_bytes_per_sample);
+          chn.number_of_samples_ = chn.is_tsa_channel()
+            ? 0
+            : static_cast<unsigned long int>(chunk_bytes / bytes_per_sample);
+          chn.ybuffer_size_ = chn.is_tsa_channel()
+            ? static_cast<unsigned long int>(chunk_bytes)
+            : static_cast<unsigned long int>(chn.number_of_samples_ * y_bytes_per_sample);
           chn.trigger_time_ = trigger_key == key_ch2
             ? trigger_time_to_time_point(trigger_value / 1.0e9)
             : trigger_time_to_time_point(trigger_value);
@@ -1000,6 +1121,11 @@ namespace imc
 
           channel chn = parse_channel_descriptor(data, size, offset, true, &current_raw_offset);
           chn.raw_data_ = data + raw_begin_;
+          if ( chn.is_tsa_channel() )
+          {
+            chn.ensure_tsa_index();
+            chn.number_of_samples_ = static_cast<unsigned long int>(chn.tsa_event_index_.size());
+          }
           register_channel(chn);
         }
 
@@ -1124,7 +1250,7 @@ namespace imc
 
           std::vector<unsigned char>& raw = streamed_raw_data_[uuid];
           size_t y_bytes_per_sample = bytes_per_numeric_type(chn.ydatatp_);
-          if ( raw.size() % y_bytes_per_sample != 0 )
+          if ( !chn.is_tsa_channel() && raw.size() % y_bytes_per_sample != 0 )
           {
             throw std::runtime_error("invalid IMC3 streamed raw-data size for channel " + uuid);
           }
@@ -1134,7 +1260,9 @@ namespace imc
           chn.xbuffer_offset_ = 0;
           chn.ybuffer_size_ = static_cast<unsigned long int>(raw.size());
           chn.xbuffer_size_ = 0;
-          chn.number_of_samples_ = static_cast<unsigned long int>(raw.size() / y_bytes_per_sample);
+          chn.number_of_samples_ = chn.is_tsa_channel()
+            ? (chn.ensure_tsa_index(), static_cast<unsigned long int>(chn.tsa_event_index_.size()))
+            : static_cast<unsigned long int>(raw.size() / y_bytes_per_sample);
         }
       }
 
@@ -1370,6 +1498,10 @@ namespace imc
         dst.group_index_ = src.group_index_;
         dst.group_name_ = src.group_name_;
         dst.group_comment_ = src.group_comment_;
+        if ( src.is_tsa_channel() )
+        {
+          dst.set_tsa_raw_payload(src.raw_data_ + src.ybuffer_offset_, src.ybuffer_size_);
+        }
         dst.set_chunk_reader([this, uuid](unsigned long int start, unsigned long int count, bool include_x, bool raw_mode)
         {
           return read_channel_chunk(uuid, start, count, include_x, raw_mode);
@@ -1384,6 +1516,18 @@ namespace imc
           throw std::runtime_error("channel does not exist:" + uuid);
         }
         return channels_.at(uuid).number_of_samples_;
+      }
+
+      std::vector<imc::tsa_event> read_channel_events(const std::string& uuid,
+                                                      unsigned long int start,
+                                                      unsigned long int count) const
+      {
+        if ( channels_.count(uuid) == 0 )
+        {
+          throw std::runtime_error("channel does not exist:" + uuid);
+        }
+
+        return channels_.at(uuid).read_tsa_events(start, count);
       }
 
       int get_channel_numeric_type(const std::string& uuid) const
