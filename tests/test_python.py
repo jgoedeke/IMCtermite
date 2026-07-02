@@ -28,6 +28,7 @@ from tests.sample_manifest import (
     DATASET_A_DIR as DATASET_A,
     DATASET_B_DIR as DATASET_B,
     EVENTS_DIR,
+    IMC3_TSA_LARGE_INITIAL_SAMPLE_OFFSET,
     IMC3_TSA_LEADING_PARTIAL_SAMPLE,
     IMC3_DIR,
     IMC3_METADATA_SAMPLES,
@@ -362,8 +363,69 @@ class TestTSASupport:
         assert imc2_channel["textdata"] == imc3_channel["textdata"] == ["hello", "0123456789"]
         assert_exact_allclose(imc2_channel["xdata"], imc3_channel["xdata"])
 
-    def test_imc3_tsa_leading_partial_sample_is_recovered(self):
-        sample_name, expected_name, expected_length = IMC3_TSA_LEADING_PARTIAL_SAMPLE
+    @pytest.mark.parametrize(
+        "sample_name,expected_name,expected_length,expected_x_first,expected_text_first,expected_x_last,expected_text_last",
+        [
+            (
+                IMC3_TSA_LEADING_PARTIAL_SAMPLE[0],
+                IMC3_TSA_LEADING_PARTIAL_SAMPLE[1],
+                IMC3_TSA_LEADING_PARTIAL_SAMPLE[2],
+                [0.006675, 0.0107875, 0.01475, 0.0186375, 0.022875, 0.0268125, 0.0307375, 0.034625],
+                [
+                    'RX COM1: **99P3',
+                    'RX COM1: {ABQ"X',
+                    'RX COM1: }A`@DN',
+                    'RX COM1: *99P3',
+                    'RX COM1: }@`@L\\\\',
+                    'RX COM1: {ABQ#Z',
+                    'RX COM1: }A`@D(',
+                    'RX COM1: *99P3',
+                ],
+                [11.8106875, 11.8148875, 11.8185375, 11.8226375, 11.826675],
+                [
+                    'RX COM1: *99P3',
+                    'RX COM1: }@`@LV',
+                    'RX COM1: {ABQ]D',
+                    'RX COM1: }A`@D,',
+                    'RX COM1: *99P3',
+                ],
+            ),
+            (
+                IMC3_TSA_LARGE_INITIAL_SAMPLE_OFFSET[0],
+                IMC3_TSA_LARGE_INITIAL_SAMPLE_OFFSET[1],
+                IMC3_TSA_LARGE_INITIAL_SAMPLE_OFFSET[2],
+                [0.005775, 0.0081625, 0.0095, 1.0128375, 1.0166875, 1.0206125, 1.0241, 1.0286375],
+                [
+                    'RX COM1: }@`AO',
+                    'RX COM1: *99P3',
+                    'RX COM1: .}@`AR',
+                    'RX COM1: *99P3',
+                    'RX COM1: }@`AM',
+                    'RX COM1: {AN7.',
+                    'RX COM1: }A`@]',
+                    'RX COM1: *99P3',
+                ],
+                [91.8053875, 91.81185, 91.81325, 91.8166875, 91.820375],
+                [
+                    'RX COM1: }A`@[',
+                    'RX COM1: *99P3',
+                    'RX COM1: }@`AO',
+                    'RX COM1: {AN2I',
+                    'RX COM1: }A`@Z',
+                ],
+            ),
+        ],
+    )
+    def test_special_imc3_tsa_samples_match_embedded_regressions(
+        self,
+        sample_name,
+        expected_name,
+        expected_length,
+        expected_x_first,
+        expected_text_first,
+        expected_x_last,
+        expected_text_last,
+    ):
         sample = require_sample(TSA_DIR / sample_name)
         imc = ImcTermite(str(sample).encode())
         channels = imc.get_channels(include_data=True)
@@ -373,12 +435,10 @@ class TestTSASupport:
         assert channels[0]["channel_type"] == "event"
         assert channels[0]["datatype"] == "10"
         assert len(channels[0]["textdata"]) == expected_length
-        assert channels[0]["textdata"][0] == "RX COM1: *03WE"
-        assert channels[0]["textdata"][-1] == "RX COM1: *99P3"
-        assert_exact_allclose(
-            [channels[0]["xdata"][0], channels[0]["xdata"][1], channels[0]["xdata"][-1]],
-            [-44.8297625, -43.7891125, 11.826675],
-        )
+        assert channels[0]["textdata"][:len(expected_text_first)] == expected_text_first
+        assert channels[0]["textdata"][-len(expected_text_last):] == expected_text_last
+        assert_exact_allclose(channels[0]["xdata"][:len(expected_x_first)], expected_x_first)
+        assert_exact_allclose(channels[0]["xdata"][-len(expected_x_last):], expected_x_last)
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_data_returns_timestamp_and_text(self, sample_name):

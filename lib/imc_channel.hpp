@@ -243,6 +243,7 @@ namespace imc
   {
     tsa_index_data index;
     index.logical_stream.reserve(size);
+    size_t initial_logical_skip = 0;
 
     for ( size_t cluster_start = 0; cluster_start < size; cluster_start += 512 )
     {
@@ -253,6 +254,11 @@ namespace imc
       }
 
       uint16_t synch_last = read_tsa_u16(data + cluster_start);
+      uint16_t first_sample_offset = read_tsa_u16(data + cluster_start + 2);
+      if ( cluster_start == 0 && first_sample_offset >= 4 )
+      {
+        initial_logical_skip = static_cast<size_t>(first_sample_offset - 4U);
+      }
       if ( synch_last > index.logical_stream.size() )
       {
         index.logical_stream.clear();
@@ -264,6 +270,18 @@ namespace imc
 
       size_t cluster_end = (std::min)(cluster_start + static_cast<size_t>(512), size);
       index.logical_stream.insert(index.logical_stream.end(), data + cluster_start + 4, data + cluster_end);
+    }
+
+    if ( initial_logical_skip > 0 )
+    {
+      if ( initial_logical_skip >= index.logical_stream.size() )
+      {
+        throw std::runtime_error("invalid TSA payload: initial sample offset exceeds logical stream");
+      }
+      index.logical_stream.erase(
+        index.logical_stream.begin(),
+        index.logical_stream.begin() + static_cast<std::ptrdiff_t>(initial_logical_skip)
+      );
     }
 
     std::string parse_failure;
