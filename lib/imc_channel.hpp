@@ -193,6 +193,52 @@ namespace imc
     return text;
   }
 
+  inline bool try_parse_tsa_logical_stream(const unsigned char* data,
+                                           size_t size,
+                                           std::vector<tsa_event_descriptor>& events,
+                                           std::string* failure = nullptr)
+  {
+    events.clear();
+    size_t cursor = 0;
+    while ( cursor + 2 <= size )
+    {
+      uint16_t length = read_tsa_u16(data + cursor);
+      if ( length == 0 )
+      {
+        if ( cursor + 4 <= size
+          && read_tsa_u16(data + cursor + 2) == 0 )
+        {
+          cursor += 4;
+          continue;
+        }
+        return true;
+      }
+
+      if ( length < 8 )
+      {
+        if ( failure != nullptr ) *failure = "invalid TSA payload: sample length shorter than header";
+        return false;
+      }
+
+      size_t padded_length = (length + 3U) & ~static_cast<size_t>(3U);
+      if ( cursor + padded_length > size )
+      {
+        if ( failure != nullptr ) *failure = "invalid TSA payload: truncated sample";
+        return false;
+      }
+
+      tsa_event_descriptor descriptor;
+      descriptor.raw_timestamp = read_tsa_u48(data + cursor + 2);
+      descriptor.text_offset = cursor + 8;
+      descriptor.text_length = length - 8;
+      events.push_back(descriptor);
+
+      cursor += padded_length;
+    }
+
+    return true;
+  }
+
   inline tsa_index_data build_tsa_index(const unsigned char* data, size_t size)
   {
     tsa_index_data index;
@@ -220,42 +266,51 @@ namespace imc
       index.logical_stream.insert(index.logical_stream.end(), data + cluster_start + 4, data + cluster_end);
     }
 
-    size_t cursor = 0;
-    while ( cursor + 2 <= index.logical_stream.size() )
+    std::string parse_failure;
+    if ( try_parse_tsa_logical_stream(
+      index.logical_stream.data(),
+      index.logical_stream.size(),
+      index.events,
+      &parse_failure
+    ) )
     {
-      uint16_t length = read_tsa_u16(index.logical_stream.data() + cursor);
-      if ( length == 0 )
-      {
-        if ( cursor + 4 <= index.logical_stream.size()
-          && read_tsa_u16(index.logical_stream.data() + cursor + 2) == 0 )
-        {
-          cursor += 4;
-          continue;
-        }
-        break;
-      }
-
-      if ( length < 8 )
-      {
-        throw std::runtime_error("invalid TSA payload: sample length shorter than header");
-      }
-
-      size_t padded_length = (length + 3U) & ~static_cast<size_t>(3U);
-      if ( cursor + padded_length > index.logical_stream.size() )
-      {
-        throw std::runtime_error("invalid TSA payload: truncated sample");
-      }
-
-      tsa_event_descriptor descriptor;
-      descriptor.raw_timestamp = read_tsa_u48(index.logical_stream.data() + cursor + 2);
-      descriptor.text_offset = cursor + 8;
-      descriptor.text_length = length - 8;
-      index.events.push_back(descriptor);
-
-      cursor += padded_length;
+      return index;
     }
 
-    return index;
+    // Some IMC3 TSA payloads begin with a truncated fragment before the first
+    // full event record. When the initial parse fails, search the first cluster
+    // for the earliest full-event boundary and rebuild the logical stream from
+    // there instead of rejecting the whole channel.
+    size_t best_offset = 0;
+    size_t best_event_count = 0;
+    std::vector<tsa_event_descriptor> candidate_events;
+    size_t search_limit = (std::min)(static_cast<size_t>(508), index.logical_stream.size());
+    for ( size_t offset = 1; offset < search_limit; ++offset )
+    {
+      if ( try_parse_tsa_logical_stream(
+        index.logical_stream.data() + offset,
+        index.logical_stream.size() - offset,
+        candidate_events
+      ) )
+      {
+        if ( !candidate_events.empty()
+          && (candidate_events.size() > best_event_count
+            || (candidate_events.size() == best_event_count && (best_offset == 0 || offset < best_offset))) )
+        {
+          best_offset = offset;
+          best_event_count = candidate_events.size();
+          index.events = candidate_events;
+        }
+      }
+    }
+
+    if ( best_offset > 0 )
+    {
+      index.logical_stream.erase(index.logical_stream.begin(), index.logical_stream.begin() + static_cast<std::ptrdiff_t>(best_offset));
+      return index;
+    }
+
+    throw std::runtime_error(parse_failure);
   }
 
   inline std::vector<tsa_event> decode_tsa_event_slice(const std::vector<unsigned char>& logical_stream,

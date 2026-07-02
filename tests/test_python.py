@@ -28,6 +28,7 @@ from tests.sample_manifest import (
     DATASET_A_DIR as DATASET_A,
     DATASET_B_DIR as DATASET_B,
     EVENTS_DIR,
+    IMC3_TSA_LEADING_PARTIAL_SAMPLE,
     IMC3_DIR,
     IMC3_METADATA_SAMPLES,
     IMC3_PARITY_SAMPLES,
@@ -360,6 +361,24 @@ class TestTSASupport:
         assert imc2_channel["channel_type"] == imc3_channel["channel_type"] == "event"
         assert imc2_channel["textdata"] == imc3_channel["textdata"] == ["hello", "0123456789"]
         assert_exact_allclose(imc2_channel["xdata"], imc3_channel["xdata"])
+
+    def test_imc3_tsa_leading_partial_sample_is_recovered(self):
+        sample_name, expected_name, expected_length = IMC3_TSA_LEADING_PARTIAL_SAMPLE
+        sample = require_sample(TSA_DIR / sample_name)
+        imc = ImcTermite(str(sample).encode())
+        channels = imc.get_channels(include_data=True)
+
+        assert len(channels) == 1
+        assert channels[0]["name"] == expected_name
+        assert channels[0]["channel_type"] == "event"
+        assert channels[0]["datatype"] == "10"
+        assert len(channels[0]["textdata"]) == expected_length
+        assert channels[0]["textdata"][0] == "RX COM1: *03WE"
+        assert channels[0]["textdata"][-1] == "RX COM1: *99P3"
+        assert_exact_allclose(
+            [channels[0]["xdata"][0], channels[0]["xdata"][1], channels[0]["xdata"][-1]],
+            [-44.8297625, -43.7891125, 11.826675],
+        )
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_data_returns_timestamp_and_text(self, sample_name):

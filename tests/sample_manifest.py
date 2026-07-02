@@ -61,6 +61,7 @@ SUPPORTED_TSA_EVENT_SAMPLES = [
 ]
 
 SUPPORTED_TSA_EVENT_SAMPLE_NAMES = [sample_name for sample_name, _ in SUPPORTED_TSA_EVENT_SAMPLES]
+IMC3_TSA_LEADING_PARTIAL_SAMPLE = ("imc3_tsa_leading_partial_fragment.dat", "PPT_TEST_2", 2968)
 
 SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES = [
     ("imc2_event_numeric_many_small_events.dat", 24),
@@ -247,6 +248,7 @@ BASIC_SAMPLE_GROUP_NAMES = (
         "events/imc3_event_numeric_two_channels.dat": ["Temperature", "Pressure"],
         "events/imc3_event_numeric_two_channels_plus_numeric.dat": ["Speed", "Alarm", "Burst"],
         "events/imc3_mixed_numeric_and_event_channel.dat": ["Temperature", "Alarm"],
+        "tsa/imc3_tsa_leading_partial_fragment.dat": ["PPT_TEST_2"],
         "tsa/imc2_TsaChannel.dat": ["TsaChannel"],
         "tsa/imc2_tsa_multicluster.dat": ["TsaChannel"],
         "tsa/imc2_tsa_padding_and_escaping.dat": ["TsaChannel"],
@@ -389,6 +391,12 @@ BASIC_SAMPLE_INFO_CASES = _with_basic_group_names((
         ["events/imc2_event_numeric_two_channels_plus_numeric.dat", "events/imc3_event_numeric_two_channels_plus_numeric.dat"],
         datatypes=["7", "7", "7"],
         channel_types=["numeric", "event", "event"],
+    )
+    | _build_basic_sample_info(
+        ["tsa/imc3_tsa_leading_partial_fragment.dat"],
+        datatypes=["10"],
+        channel_types=["event"],
+        channel_names=["PPT_TEST_2"],
     )
     | _build_basic_sample_info(
         [
