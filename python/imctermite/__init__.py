@@ -6,6 +6,7 @@ native implementation so IDEs/type checkers can use inline type annotations.
 
 Public API:
 - `ImcTermite`: preferred entry point.
+- `ChannelMetadata`: immutable, format-neutral channel metadata.
 
 Backwards compatibility:
 - `imctermite`: deprecated alias class (warns on construction).
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Literal, TypedDict, cast
 
 import numpy as np
@@ -27,6 +29,46 @@ if TYPE_CHECKING:
 
 
 _Mode = Literal["scaled", "raw"]
+ChannelKind = Literal["numeric", "tsa_event", "numeric_event"]
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelMetadata:
+    """Format-neutral channel metadata without sample payloads."""
+
+    schema_version: int
+    uuid: str
+    name: str
+    source_name: str
+    comment: str
+    origin: str
+    origin_comment: str
+    description: str
+    language_code: str
+    codepage: str
+    y_name: str
+    y_unit: str
+    x_name: str
+    x_unit: str
+    group_name: str
+    group_comment: str
+    kind: ChannelKind
+    dimension: int
+    x_numeric_type: int
+    y_numeric_type: int
+    x_significant_bits: int
+    y_significant_bits: int
+    sample_count: int
+    group_index: int
+    has_group: bool
+    trigger_time: float
+    absolute_trigger_time: float
+    x_step_width: float
+    x_offset: float
+    x_factor: float
+    x_scaling_offset: float
+    y_factor: float
+    y_offset: float
 
 
 class ChannelNumpyChunk(TypedDict):
@@ -150,6 +192,21 @@ class ImcTermite:
         """
 
         return self._native.get_channels(include_data)
+
+    def get_channel_metadata(self, channeluuid: str | bytes) -> ChannelMetadata:
+        """Return typed metadata for one channel without loading sample data.
+
+        The canonical ``name`` falls back to the component-group name when the
+        source channel name is empty. ``source_name`` preserves the literal
+        value exposed by the legacy dictionary API.
+        """
+
+        return ChannelMetadata(**self._native.get_channel_metadata(channeluuid))
+
+    def get_channels_metadata(self) -> list[ChannelMetadata]:
+        """Return typed metadata for all channels in file order."""
+
+        return [ChannelMetadata(**metadata) for metadata in self._native.get_channels_metadata()]
 
     def get_channel_length(self, channeluuid: str | bytes) -> int:
         """Return number of samples in a channel."""

@@ -54,7 +54,7 @@ from tests.sample_manifest import (
 )
 
 try:
-    from imctermite import ImcTermite
+    from imctermite import ChannelMetadata, ImcTermite
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
 
@@ -100,6 +100,44 @@ class TestChannelListing:
             assert key in first_channel, f"Missing key: {key}"
 
         assert first_channel['channel_type'] == 'numeric'
+
+    @pytest.mark.parametrize(
+        "sample_path",
+        [
+            DATASET_A / "datasetA_1.raw",
+            IMC3_DIR / "imc3_sampleA.dat",
+        ],
+    )
+    def test_typed_channel_metadata_matches_existing_dictionary(self, sample_path):
+        sample = require_sample(sample_path)
+        parser = ImcTermite(sample)
+        existing = parser.get_channels(include_data=False)[0]
+
+        metadata = parser.get_channel_metadata(existing["uuid"])
+
+        assert isinstance(metadata, ChannelMetadata)
+        assert metadata.schema_version == 1
+        assert metadata.uuid == existing["uuid"]
+        assert metadata.name == (existing["name"] or existing["group"]["name"])
+        assert metadata.source_name == existing["name"]
+        assert metadata.y_numeric_type == int(existing["datatype"])
+        assert metadata.y_significant_bits == int(existing["significantbits"])
+        assert metadata.sample_count == parser.get_channel_length(existing["uuid"])
+        assert metadata.x_step_width == float(existing["xstepwidth"])
+        assert metadata.y_factor == float(existing["factor"])
+        assert metadata.group_name == existing["group"]["name"]
+
+    def test_typed_channel_metadata_list_preserves_file_order(self):
+        sample = require_sample(SAMPLES_DIR / "exampleB.raw")
+        parser = ImcTermite(sample)
+
+        existing = parser.get_channels(include_data=False)
+        metadata = parser.get_channels_metadata()
+
+        assert [channel.uuid for channel in metadata] == [channel["uuid"] for channel in existing]
+        assert [channel.name for channel in metadata] == [
+            channel["name"] or channel["group"]["name"] for channel in existing
+        ]
     
     def test_get_channel_data(self, imc_instance):
         """Should return channel data with xdata and ydata"""

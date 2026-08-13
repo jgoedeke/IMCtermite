@@ -6,6 +6,7 @@
 #include "imc_datatype.hpp"
 #include "imc_conversion.hpp"
 #include "imc_block.hpp"
+#include "imc_metadata.hpp"
 #include <functional>
 #include <sstream>
 #include <math.h>
@@ -1047,6 +1048,46 @@ namespace imc
     std::string channel_type() const
     {
       return is_event_channel() ? std::string("event") : std::string("numeric");
+    }
+
+    channel_metadata metadata() const
+    {
+      channel_metadata result;
+      result.uuid = uuid_;
+      result.name = name_.empty() ? group_name_ : name_;
+      result.source_name = name_;
+      result.comment = comment_;
+      result.origin = origin_;
+      result.origin_comment = origin_comment_;
+      result.description = text_;
+      result.language_code = language_code_;
+      result.codepage = codepage_;
+      result.y_name = yname_;
+      result.y_unit = yunit_;
+      result.x_name = xname_;
+      result.x_unit = xunit_;
+      result.group_name = group_name_;
+      result.group_comment = group_comment_;
+      result.kind = is_tsa_channel()
+        ? channel_kind::tsa_event
+        : (is_numeric_event_channel() ? channel_kind::numeric_event : channel_kind::numeric);
+      result.dimension = dimension_;
+      result.x_numeric_type = static_cast<int>(xdatatp_);
+      result.y_numeric_type = static_cast<int>(ydatatp_);
+      result.x_significant_bits = xsignbits_;
+      result.y_significant_bits = ysignbits_;
+      result.sample_count = number_of_samples_;
+      result.group_index = group_index_;
+      result.has_group = group_index_ != static_cast<unsigned long int>(-1);
+      result.trigger_time = seconds_since_1980(trigger_time_) + trigger_time_frac_secs_;
+      result.absolute_trigger_time = seconds_since_1980(absolute_trigger_time_) + trigger_time_frac_secs_;
+      result.x_step_width = xstepwidth_;
+      result.x_offset = xstart_;
+      result.x_factor = xfactor_;
+      result.x_scaling_offset = xoffset_;
+      result.y_factor = yfactor_;
+      result.y_offset = yoffset_;
+      return result;
     }
 
     void set_tsa_raw_payload(const unsigned char* data, unsigned long int size)

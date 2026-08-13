@@ -119,6 +119,26 @@ CPP_PROBE_SOURCE = textwrap.dedent(
         std::cout << "]";
     }
 
+    void print_channel_metadata(const imc::channel_metadata& metadata)
+    {
+        std::cout << R"({"schema_version":)" << metadata.schema_version
+                  << R"(,"uuid":")" << imc::escape_json_string(metadata.uuid)
+                  << R"(","name":")" << imc::escape_json_string(metadata.name)
+                  << R"(","source_name":")" << imc::escape_json_string(metadata.source_name)
+                  << R"(","kind":)" << static_cast<int>(metadata.kind)
+                  << R"(,"dimension":)" << metadata.dimension
+                  << R"(,"y_numeric_type":)" << metadata.y_numeric_type
+                  << R"(,"y_significant_bits":)" << metadata.y_significant_bits
+                  << R"(,"sample_count":)" << metadata.sample_count
+                  << R"(,"trigger_time":)" << metadata.trigger_time
+                  << R"(,"x_step_width":)" << metadata.x_step_width
+                  << R"(,"x_offset":)" << metadata.x_offset
+                  << R"(,"y_factor":)" << metadata.y_factor
+                  << R"(,"y_offset":)" << metadata.y_offset
+                  << R"(,"group_name":")" << imc::escape_json_string(metadata.group_name)
+                  << R"("})";
+    }
+
     template <typename EventPayload>
     void print_numeric_event_array(const EventPayload& payload)
     {
@@ -172,6 +192,18 @@ CPP_PROBE_SOURCE = textwrap.dedent(
             imc::raw raw(argv[2]);
             imc::channel channel = raw.get_channel(argv[3]);
             std::cout << channel.get_json(true);
+            return 0;
+        }
+
+        if ( command == "get_channel_metadata_json" )
+        {
+            if ( argc != 4 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_channel_metadata(raw.get_channel_metadata(argv[3]));
             return 0;
         }
 
@@ -375,6 +407,35 @@ class TestCppFacade:
         assert cpp_channel["datatype"] == python_channel["datatype"]
         assert_exact_allclose(cpp_channel["xdata"], python_channel["xdata"])
         assert_exact_allclose(cpp_channel["ydata"], python_channel["ydata"])
+
+    @pytest.mark.parametrize(
+        "sample",
+        [
+            DATASET_A_DIR / "datasetA_1.raw",
+            IMC3_DIR / "imc3_sampleA.dat",
+        ],
+    )
+    def test_typed_channel_metadata_matches_existing_json(self, sample, cpp_probe_binary):
+        sample = require_sample(sample)
+        json_metadata = ImcTermite(str(sample).encode()).get_channels(include_data=False)[0]
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_metadata_json", str(sample), json_metadata["uuid"]],
+        )
+        typed_metadata = json.loads(run_output[run_output.find("{"):])
+
+        assert typed_metadata["schema_version"] == 1
+        assert typed_metadata["uuid"] == json_metadata["uuid"]
+        assert typed_metadata["name"] == (json_metadata["name"] or json_metadata["group"]["name"])
+        assert typed_metadata["source_name"] == json_metadata["name"]
+        assert typed_metadata["y_numeric_type"] == int(json_metadata["datatype"])
+        assert typed_metadata["y_significant_bits"] == int(json_metadata["significantbits"])
+        assert typed_metadata["x_step_width"] == float(json_metadata["xstepwidth"])
+        assert typed_metadata["x_offset"] == float(json_metadata["xoffset"])
+        assert typed_metadata["y_factor"] == float(json_metadata["factor"])
+        assert typed_metadata["y_offset"] == float(json_metadata["offset"])
+        assert typed_metadata["group_name"] == json_metadata["group"]["name"]
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_adapter_matches_python_eager_load(self, sample_name, cpp_probe_binary):

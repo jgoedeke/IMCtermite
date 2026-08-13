@@ -347,6 +347,46 @@ namespace imc
         return is_event_channel() ? std::string("event") : std::string("numeric");
       }
 
+      imc::channel_metadata metadata() const
+      {
+        imc::channel_metadata result;
+        result.uuid = uuid_;
+        result.name = name_.empty() ? group_name_ : name_;
+        result.source_name = name_;
+        result.comment = comment_;
+        result.origin = origin_;
+        result.origin_comment = origin_comment_;
+        result.description = text_;
+        result.language_code = language_code_;
+        result.codepage = codepage_;
+        result.y_name = yname_;
+        result.y_unit = yunit_;
+        result.x_name = xname_;
+        result.x_unit = xunit_;
+        result.group_name = group_name_;
+        result.group_comment = group_comment_;
+        result.kind = is_tsa_channel()
+          ? imc::channel_kind::tsa_event
+          : (is_numeric_event_channel() ? imc::channel_kind::numeric_event : imc::channel_kind::numeric);
+        result.dimension = dimension_;
+        result.x_numeric_type = static_cast<int>(xdatatp_);
+        result.y_numeric_type = static_cast<int>(ydatatp_);
+        result.x_significant_bits = xsignbits_;
+        result.y_significant_bits = ysignbits_;
+        result.sample_count = number_of_samples_;
+        result.group_index = group_index_;
+        result.has_group = !group_name_.empty() || !group_comment_.empty();
+        result.trigger_time = imc::seconds_since_1980(trigger_time_);
+        result.absolute_trigger_time = imc::seconds_since_1980(absolute_trigger_time_);
+        result.x_step_width = xstepwidth_;
+        result.x_offset = xstart_;
+        result.x_factor = xfactor_;
+        result.x_scaling_offset = xoffset_;
+        result.y_factor = yfactor_;
+        result.y_offset = yoffset_;
+        return result;
+      }
+
       void ensure_tsa_index() const
       {
         if ( !is_tsa_channel() || tsa_index_built_ )
@@ -1860,6 +1900,22 @@ namespace imc
           names.push_back(channels_.at(uuid).name_);
         }
         return names;
+      }
+
+      imc::channel_metadata get_channel_metadata(const std::string& uuid) const
+      {
+        return get_channel(uuid).metadata();
+      }
+
+      std::vector<imc::channel_metadata> get_channels_metadata() const
+      {
+        std::vector<imc::channel_metadata> metadata;
+        metadata.reserve(channel_order_.size());
+        for ( const std::string& uuid : channel_order_ )
+        {
+          metadata.push_back(channels_.at(uuid).metadata());
+        }
+        return metadata;
       }
 
       imc::channel get_legacy_channel(const std::string& uuid) const

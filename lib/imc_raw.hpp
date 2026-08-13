@@ -229,6 +229,26 @@ namespace imc
       return imc2_dataset_.get_channels(json, include_data);
     }
 
+    channel_metadata get_channel_metadata(const std::string& uuid) const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channel_metadata(uuid);
+      }
+
+      return imc2_dataset_.get_channel_metadata(uuid);
+    }
+
+    std::vector<channel_metadata> get_channels_metadata() const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channels_metadata();
+      }
+
+      return imc2_dataset_.get_channels_metadata();
+    }
+
     // get particular channel including data by its uuid
     imc::channel get_channel(std::string uuid)
     {

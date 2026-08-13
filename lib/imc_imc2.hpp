@@ -427,6 +427,26 @@ namespace imc
         throw std::runtime_error(std::string("channel does not exist:") + uuid);
       }
 
+      imc::channel_metadata get_channel_metadata(const std::string& uuid) const
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).metadata();
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<imc::channel_metadata> get_channels_metadata() const
+      {
+        std::vector<imc::channel_metadata> metadata;
+        metadata.reserve(channel_order_.size());
+        for ( const std::string& uuid : channel_order_ )
+        {
+          metadata.push_back(channels_.at(uuid).metadata());
+        }
+        return metadata;
+      }
+
       std::vector<imc::block> list_blocks(const imc::key &mykey)
       {
         std::vector<imc::block> myblocks;

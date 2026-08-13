@@ -160,6 +160,24 @@ channels = imcraw.get_channels(False)
 print(channels)
 ```
 
+### Typed channel metadata
+
+For integrations that need a stable metadata contract without loading sample
+data, use the typed API:
+
+```Python
+from imctermite import ImcTermite
+
+imcraw = ImcTermite("samples/sampleA.raw")
+for channel in imcraw.get_channels_metadata():
+    print(channel.name, channel.y_unit, channel.sample_count)
+```
+
+`ChannelMetadata.name` is the canonical channel name and falls back to the IMC
+component-group name when the source channel name is empty. The literal source
+value remains available as `ChannelMetadata.source_name`. The existing
+`get_channels()` dictionary schema is unchanged.
+
 A more complete [example](python/examples/usage.py), including the methods for
 obtaining the channels, i.a. their data and/or directly printing them to files,
 can be found in the `python/examples` folder.
