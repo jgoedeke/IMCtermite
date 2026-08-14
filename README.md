@@ -178,6 +178,19 @@ component-group name when the source channel name is empty. The literal source
 value remains available as `ChannelMetadata.source_name`. The existing
 `get_channels()` dictionary schema is unchanged.
 
+File, group, standalone text-object, and typed channel-property metadata are
+available through separate typed getters:
+
+```Python
+metadata = imcraw.get_file_metadata()
+groups = imcraw.get_groups_metadata()
+text_objects = imcraw.get_text_objects_metadata()
+channel = imcraw.get_channels_metadata()[0]
+
+print(metadata.producer, metadata.comment)
+print(channel.properties)
+```
+
 ### TSA custom-decoder support
 
 For native custom decoders, `lib/imc_raw.hpp` provides copied TSA container

@@ -6,6 +6,33 @@ from libcpp cimport bool
 
 cdef extern from "imc_raw.hpp" namespace "imc":
 
+  cdef struct property_metadata:
+    int schema_version
+    string name
+    string value
+    int type_code
+    int flags
+
+  cdef struct file_metadata:
+    int schema_version
+    string producer
+    string comment
+    string language_code
+    string codepage
+
+  cdef struct group_metadata:
+    int schema_version
+    unsigned long long index
+    string name
+    string comment
+
+  cdef struct text_object_metadata:
+    int schema_version
+    unsigned long long group_index
+    string name
+    string comment
+    string content
+
   cdef struct channel_metadata:
     int schema_version
     string uuid
@@ -39,6 +66,7 @@ cdef extern from "imc_raw.hpp" namespace "imc":
     double x_scaling_offset
     double y_factor
     double y_offset
+    vector[property_metadata] properties
     int kind_code()
 
   cdef struct channel_events:
@@ -85,6 +113,9 @@ cdef extern from "imc_raw.hpp" namespace "imc":
     # get typed channel metadata without sample data
     channel_metadata get_channel_metadata(string uuid) except +
     vector[channel_metadata] get_channels_metadata() except +
+    file_metadata get_file_metadata() except +
+    vector[group_metadata] get_groups_metadata() except +
+    vector[text_object_metadata] get_text_objects_metadata() except +
 
     # get length of a channel
     unsigned long int get_channel_length(string uuid) except +

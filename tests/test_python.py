@@ -53,8 +53,17 @@ from tests.sample_manifest import (
     iter_sample_files,
 )
 
+METADATA_DIR = SAMPLES_DIR / "metadata"
+
 try:
-    from imctermite import ChannelMetadata, ImcTermite
+    from imctermite import (
+        ChannelMetadata,
+        FileMetadata,
+        GroupMetadata,
+        ImcTermite,
+        PropertyMetadata,
+        TextObjectMetadata,
+    )
 except ImportError:
     pytest.skip("imctermite module not built - run 'make python-build' first", allow_module_level=True)
 
@@ -138,7 +147,7 @@ class TestChannelListing:
         assert [channel.name for channel in metadata] == [
             channel["name"] or channel["group"]["name"] for channel in existing
         ]
-    
+
     def test_get_channel_data(self, imc_instance):
         """Should return channel data with xdata and ydata"""
         channels = imc_instance.get_channels(include_data=True)
@@ -161,6 +170,42 @@ class TestChannelListing:
 
         assert [channel['group']['name'] for channel in channels] == ['kanal1', 'kanal2', 'E06_6_121']
         assert [int(channel['uuid']) for channel in channels] == sorted(int(channel['uuid']) for channel in channels)
+
+
+class TestContainerMetadata:
+    @pytest.mark.parametrize(
+        "sample_name",
+        ["imc2_object_and_file_metadata.dat", "imc3_object_and_file_metadata.dat"],
+    )
+    def test_typed_container_metadata_matches_fixture(self, sample_name):
+        parser = ImcTermite(require_sample(METADATA_DIR / sample_name))
+
+        file_metadata = parser.get_file_metadata()
+        groups = parser.get_groups_metadata()
+        text_objects = parser.get_text_objects_metadata()
+        channels = parser.get_channels_metadata()
+
+        assert isinstance(file_metadata, FileMetadata)
+        assert file_metadata.producer == "Famos"
+        assert file_metadata.comment == "file comment: metadata fixture"
+        assert groups == [GroupMetadata(1, 1, "MetadataGroup", "group comment")]
+        assert text_objects == [TextObjectMetadata(
+            1,
+            1,
+            "Readme",
+            "text object comment",
+            "metadata fixture text object",
+        )]
+        assert len(channels) == 1
+        assert isinstance(channels[0], ChannelMetadata)
+        assert channels[0].name == "Signal"
+        assert channels[0].description == ""
+        assert channels[0].properties == (
+            PropertyMetadata(1, "Fixture.Text", "alpha,beta", 0, 0),
+            PropertyMetadata(1, "Fixture.Integer", "212", 1, 0),
+            PropertyMetadata(1, "Fixture.Real", "21.5", 2, 0),
+            PropertyMetadata(1, "Fixture.Boolean", "1", 5, 0),
+        )
 
 
 class TestDataIntegrity:

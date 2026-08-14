@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 
-from imctermite._native cimport channel_chunk, channel_event_chunk, channel_events, channel_metadata, cppimctermite
+from imctermite._native cimport channel_chunk, channel_event_chunk, channel_events, channel_metadata, cppimctermite, file_metadata, group_metadata, property_metadata, text_object_metadata
 
 cimport numpy as cnp
 import numpy as np
@@ -73,6 +73,42 @@ cdef dict _decode_channel_metadata(channel_metadata metadata):
     "x_scaling_offset": metadata.x_scaling_offset,
     "y_factor": metadata.y_factor,
     "y_offset": metadata.y_offset,
+    "properties": [_decode_property_metadata(metadata.properties[index]) for index in range(metadata.properties.size())],
+  }
+
+cdef dict _decode_property_metadata(property_metadata metadata):
+  return {
+    "schema_version": metadata.schema_version,
+    "name": metadata.name.decode('utf-8', errors='replace'),
+    "value": metadata.value.decode('utf-8', errors='replace'),
+    "type_code": metadata.type_code,
+    "flags": metadata.flags,
+  }
+
+cdef dict _decode_file_metadata(file_metadata metadata):
+  return {
+    "schema_version": metadata.schema_version,
+    "producer": metadata.producer.decode('utf-8', errors='replace'),
+    "comment": metadata.comment.decode('utf-8', errors='replace'),
+    "language_code": metadata.language_code.decode('utf-8', errors='replace'),
+    "codepage": metadata.codepage.decode('utf-8', errors='replace'),
+  }
+
+cdef dict _decode_group_metadata(group_metadata metadata):
+  return {
+    "schema_version": metadata.schema_version,
+    "index": metadata.index,
+    "name": metadata.name.decode('utf-8', errors='replace'),
+    "comment": metadata.comment.decode('utf-8', errors='replace'),
+  }
+
+cdef dict _decode_text_object_metadata(text_object_metadata metadata):
+  return {
+    "schema_version": metadata.schema_version,
+    "group_index": metadata.group_index,
+    "name": metadata.name.decode('utf-8', errors='replace'),
+    "comment": metadata.comment.decode('utf-8', errors='replace'),
+    "content": metadata.content.decode('utf-8', errors='replace'),
   }
 
 cdef dict _decode_numeric_event_payload(channel_events payload, bool include_timestamps):
@@ -161,6 +197,17 @@ cdef class imctermite:
   def get_channels_metadata(self):
     metadata = self.cppimc.get_channels_metadata()
     return [_decode_channel_metadata(metadata[index]) for index in range(metadata.size())]
+
+  def get_file_metadata(self):
+    return _decode_file_metadata(self.cppimc.get_file_metadata())
+
+  def get_groups_metadata(self):
+    metadata = self.cppimc.get_groups_metadata()
+    return [_decode_group_metadata(metadata[index]) for index in range(metadata.size())]
+
+  def get_text_objects_metadata(self):
+    metadata = self.cppimc.get_text_objects_metadata()
+    return [_decode_text_object_metadata(metadata[index]) for index in range(metadata.size())]
 
   # get length of a channel
   def get_channel_length(self, channeluuid):

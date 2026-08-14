@@ -33,6 +33,49 @@ ChannelKind = Literal["numeric", "tsa_event", "numeric_event"]
 
 
 @dataclass(frozen=True, slots=True)
+class PropertyMetadata:
+    """One typed, persisted property attached to a channel."""
+
+    schema_version: int
+    name: str
+    value: str
+    type_code: int
+    flags: int
+
+
+@dataclass(frozen=True, slots=True)
+class FileMetadata:
+    """Format-neutral file producer, comment, and language metadata."""
+
+    schema_version: int
+    producer: str
+    comment: str
+    language_code: str
+    codepage: str
+
+
+@dataclass(frozen=True, slots=True)
+class GroupMetadata:
+    """One named container group defined by the source file."""
+
+    schema_version: int
+    index: int
+    name: str
+    comment: str
+
+
+@dataclass(frozen=True, slots=True)
+class TextObjectMetadata:
+    """One standalone source text object."""
+
+    schema_version: int
+    group_index: int
+    name: str
+    comment: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
 class ChannelMetadata:
     """Format-neutral channel metadata without sample payloads."""
 
@@ -69,6 +112,7 @@ class ChannelMetadata:
     x_scaling_offset: float
     y_factor: float
     y_offset: float
+    properties: tuple[PropertyMetadata, ...]
 
 
 class ChannelNumpyChunk(TypedDict):
@@ -201,12 +245,33 @@ class ImcTermite:
         value exposed by the legacy dictionary API.
         """
 
-        return ChannelMetadata(**self._native.get_channel_metadata(channeluuid))
+        metadata = self._native.get_channel_metadata(channeluuid)
+        metadata["properties"] = tuple(PropertyMetadata(**property) for property in metadata["properties"])
+        return ChannelMetadata(**metadata)
 
     def get_channels_metadata(self) -> list[ChannelMetadata]:
         """Return typed metadata for all channels in file order."""
 
-        return [ChannelMetadata(**metadata) for metadata in self._native.get_channels_metadata()]
+        result = []
+        for metadata in self._native.get_channels_metadata():
+            metadata["properties"] = tuple(PropertyMetadata(**property) for property in metadata["properties"])
+            result.append(ChannelMetadata(**metadata))
+        return result
+
+    def get_file_metadata(self) -> FileMetadata:
+        """Return file-level producer, comment, language, and codepage metadata."""
+
+        return FileMetadata(**self._native.get_file_metadata())
+
+    def get_groups_metadata(self) -> list[GroupMetadata]:
+        """Return source-defined groups in source order."""
+
+        return [GroupMetadata(**metadata) for metadata in self._native.get_groups_metadata()]
+
+    def get_text_objects_metadata(self) -> list[TextObjectMetadata]:
+        """Return standalone text objects in source order."""
+
+        return [TextObjectMetadata(**metadata) for metadata in self._native.get_text_objects_metadata()]
 
     def get_channel_length(self, channeluuid: str | bytes) -> int:
         """Return number of samples in a channel."""
@@ -392,4 +457,13 @@ def get_codepage(chn: bytes) -> str:
 
     return _native.get_codepage(chn)
 
-__all__ = ["ImcTermite", "imctermite", "get_codepage"]
+__all__ = [
+    "ChannelMetadata",
+    "FileMetadata",
+    "GroupMetadata",
+    "ImcTermite",
+    "PropertyMetadata",
+    "TextObjectMetadata",
+    "get_codepage",
+    "imctermite",
+]
