@@ -178,6 +178,14 @@ component-group name when the source channel name is empty. The literal source
 value remains available as `ChannelMetadata.source_name`. The existing
 `get_channels()` dictionary schema is unchanged.
 
+### TSA custom-decoder support
+
+For native custom decoders, `lib/imc_raw.hpp` provides copied TSA container
+bytes and logical timestamped-record access. This supports application-specific
+frame decoding while IMCtermite remains responsible only for container parsing,
+metadata, and sample access; it does not decode proprietary protocol
+descriptions or write IMC files.
+
 A more complete [example](python/examples/usage.py), including the methods for
 obtaining the channels, i.a. their data and/or directly printing them to files,
 can be found in the `python/examples` folder.

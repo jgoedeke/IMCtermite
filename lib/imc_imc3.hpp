@@ -49,6 +49,7 @@ namespace imc
     constexpr uint32_t key_cs1 = make_key('|','C','S','1');
     constexpr uint32_t key_ca1 = make_key('|','C','A','1');
     constexpr uint32_t key_cg1 = make_key('|','C','G','1');
+    constexpr uint32_t key_ct1 = make_key('|','C','t','1');
     constexpr uint32_t key_cc1 = make_key('|','C','C','1');
     constexpr uint32_t key_cm1 = make_key('|','C','M','1');
     constexpr uint32_t key_ch1 = make_key('|','C','H','1');
@@ -298,6 +299,7 @@ namespace imc
       std::string group_name_;
       std::string group_comment_;
       std::string text_;
+      std::vector<imc::property_metadata> properties_;
       std::chrono::system_clock::time_point trigger_time_;
       std::chrono::system_clock::time_point absolute_trigger_time_;
       double xstepwidth_ = 1.0;
@@ -384,6 +386,41 @@ namespace imc
         result.x_scaling_offset = xoffset_;
         result.y_factor = yfactor_;
         result.y_offset = yoffset_;
+        result.properties = properties_;
+        return result;
+      }
+
+      imc::channel_representation representation() const
+      {
+        imc::channel_representation result;
+        result.format = imc::source_format::imc3;
+        result.uuid = uuid_;
+        result.codepage = codepage_;
+        result.storage_kind = is_tsa_channel()
+          ? imc::channel_storage_kind::tsa
+          : (is_numeric_event_channel()
+            ? imc::channel_storage_kind::numeric_segmented
+            : (dimension_ == 2 ? imc::channel_storage_kind::explicit_xy : imc::channel_storage_kind::generated_numeric));
+        result.has_generated_x_axis = dimension_ != 2;
+        result.x_numeric_type = static_cast<int>(xdatatp_);
+        result.y_numeric_type = static_cast<int>(ydatatp_);
+        result.x_significant_bits = xsignbits_;
+        result.y_significant_bits = ysignbits_;
+        result.x_sample_width_bytes = static_cast<uint64_t>(imc::imc3::bytes_per_numeric_type(xdatatp_));
+        result.y_sample_width_bytes = static_cast<uint64_t>(imc::imc3::bytes_per_numeric_type(ydatatp_));
+        result.x_payload_size_bytes = static_cast<uint64_t>(xbuffer_size_);
+        result.y_payload_size_bytes = static_cast<uint64_t>(ybuffer_size_);
+        result.numeric_sample_count = static_cast<uint64_t>(
+          is_numeric_event_channel() ? numeric_event_total_samples_ : number_of_samples_
+        );
+        result.segment_count = static_cast<uint64_t>(
+          is_numeric_event_channel() ? numeric_event_index_.size() : 0
+        );
+        result.tsa_payload_size_bytes = static_cast<uint64_t>(
+          is_tsa_channel() ? ybuffer_size_ : 0
+        );
+        result.timestamp_factor = xfactor_;
+        result.timestamp_offset = xoffset_;
         return result;
       }
 
@@ -403,6 +440,138 @@ namespace imc
         tsa_logical_stream_ = std::move(index.logical_stream);
         tsa_event_index_ = std::move(index.events);
         tsa_index_built_ = true;
+      }
+
+      uint64_t tsa_payload_size_bytes() const
+      {
+        if ( !is_tsa_channel() )
+        {
+          throw std::runtime_error("channel is numeric; TSA payload is unavailable");
+        }
+        return static_cast<uint64_t>(ybuffer_size_);
+      }
+
+      std::vector<unsigned char> read_tsa_payload(uint64_t offset_bytes, uint64_t length_bytes) const
+      {
+        const uint64_t payload_size_bytes = tsa_payload_size_bytes();
+        if ( offset_bytes > payload_size_bytes || length_bytes > payload_size_bytes - offset_bytes )
+        {
+          throw std::runtime_error("requested TSA payload range exceeds channel payload");
+        }
+        if ( raw_data_ == nullptr )
+        {
+          throw std::runtime_error("TSA raw-data buffer is not available");
+        }
+
+        const unsigned char* start = raw_data_ + ybuffer_offset_ + static_cast<size_t>(offset_bytes);
+        return std::vector<unsigned char>(start, start + static_cast<size_t>(length_bytes));
+      }
+
+      std::vector<imc::tsa_record_descriptor> read_tsa_record_descriptors(
+        uint64_t start_record_ordinal,
+        uint64_t record_count
+      ) const
+      {
+        ensure_tsa_index();
+        if ( start_record_ordinal >= tsa_event_index_.size() || record_count == 0 )
+        {
+          return {};
+        }
+
+        const uint64_t available_records = static_cast<uint64_t>(tsa_event_index_.size()) - start_record_ordinal;
+        const uint64_t actual_record_count = (std::min)(record_count, available_records);
+        std::vector<imc::tsa_record_descriptor> descriptors;
+        descriptors.reserve(static_cast<size_t>(actual_record_count));
+        for ( uint64_t index = 0; index < actual_record_count; ++index )
+        {
+          const imc::tsa_event_descriptor& source = tsa_event_index_[static_cast<size_t>(start_record_ordinal + index)];
+          imc::tsa_record_descriptor descriptor;
+          descriptor.record_ordinal = start_record_ordinal + index;
+          descriptor.raw_timestamp = source.raw_timestamp;
+          descriptor.timestamp = static_cast<double>(source.raw_timestamp) * xfactor_ + xoffset_;
+          descriptor.logical_payload_offset_bytes = static_cast<uint64_t>(source.text_offset);
+          descriptor.payload_length_bytes = static_cast<uint64_t>(source.text_length);
+          descriptors.push_back(descriptor);
+        }
+        return descriptors;
+      }
+
+      std::vector<unsigned char> read_tsa_record_payload(uint64_t record_ordinal) const
+      {
+        ensure_tsa_index();
+        if ( record_ordinal >= tsa_event_index_.size() )
+        {
+          throw std::runtime_error("requested TSA record ordinal exceeds channel record count");
+        }
+
+        const imc::tsa_event_descriptor& descriptor = tsa_event_index_[static_cast<size_t>(record_ordinal)];
+        const unsigned char* start = tsa_logical_stream_.data() + descriptor.text_offset;
+        return std::vector<unsigned char>(start, start + descriptor.text_length);
+      }
+
+      std::vector<unsigned char> read_component_payload(imc::channel_component component,
+                                                         uint64_t offset_bytes,
+                                                         uint64_t length_bytes) const
+      {
+        if ( is_tsa_channel() )
+        {
+          throw std::runtime_error("channel is TSA; numeric component payload is unavailable");
+        }
+        if ( raw_data_ == nullptr )
+        {
+          throw std::runtime_error("numeric component raw-data buffer is not available");
+        }
+
+        const bool is_x_component = component == imc::channel_component::x;
+        if ( is_x_component && dimension_ != 2 )
+        {
+          throw std::runtime_error("channel has generated X values; physical X component payload is unavailable");
+        }
+
+        const uint64_t payload_size = static_cast<uint64_t>(
+          is_x_component ? xbuffer_size_ : ybuffer_size_
+        );
+        if ( offset_bytes > payload_size || length_bytes > payload_size - offset_bytes )
+        {
+          throw std::runtime_error("requested component payload range exceeds channel payload");
+        }
+
+        const unsigned long int component_offset = is_x_component ? xbuffer_offset_ : ybuffer_offset_;
+        const unsigned char* start = raw_data_ + component_offset + offset_bytes;
+        return std::vector<unsigned char>(start, start + length_bytes);
+      }
+
+      std::vector<imc::tsa_channel_segment> get_tsa_channel_segments() const
+      {
+        const uint64_t payload_size_bytes = tsa_payload_size_bytes();
+        imc::tsa_channel_segment segment;
+        segment.raw_payload_length_bytes = payload_size_bytes;
+        segment.trigger_time_seconds_since_1980 = imc::seconds_since_1980(absolute_trigger_time_);
+        return {segment};
+      }
+
+      std::vector<imc::numeric_channel_segment> get_numeric_channel_segments() const
+      {
+        if ( !is_numeric_event_channel() )
+        {
+          throw std::runtime_error("channel is not a numeric segmented channel");
+        }
+
+        std::vector<imc::numeric_channel_segment> segments;
+        segments.reserve(numeric_event_index_.size());
+        for ( size_t index = 0; index < numeric_event_index_.size(); ++index )
+        {
+          const imc::numeric_event_descriptor& source = numeric_event_index_[index];
+          imc::numeric_channel_segment segment;
+          segment.segment_ordinal = static_cast<uint64_t>(index);
+          segment.sample_offset = source.start;
+          segment.sample_count = source.count;
+          segment.trigger_time_seconds_since_1980 = source.timestamp;
+          segment.x_start = source.xstart;
+          segment.x_step_width = source.xstepwidth;
+          segments.push_back(segment);
+        }
+        return segments;
       }
 
       std::vector<imc::tsa_event> read_tsa_events(unsigned long int start, unsigned long int count) const
@@ -877,6 +1046,7 @@ namespace imc
       std::string language_code_;
       std::string origin_;
       std::string origin_comment_;
+      imc::file_metadata file_metadata_;
       uint32_t magic1_ = 0;
       uint32_t magic2_ = 0;
       uint8_t variant_ = 0;
@@ -888,6 +1058,7 @@ namespace imc
       std::map<std::string, channel> channels_;
       std::vector<std::string> channel_order_;
       std::map<std::string,std::vector<unsigned char>> streamed_raw_data_;
+      std::vector<imc::text_object_metadata> text_objects_metadata_;
 
       void clear()
       {
@@ -895,6 +1066,7 @@ namespace imc
         language_code_.clear();
         origin_.clear();
         origin_comment_.clear();
+        file_metadata_ = {};
         magic1_ = 0;
         magic2_ = 0;
         variant_ = 0;
@@ -906,6 +1078,7 @@ namespace imc
         channels_.clear();
         channel_order_.clear();
         streamed_raw_data_.clear();
+        text_objects_metadata_.clear();
       }
 
       size_t parse_header(const unsigned char* data, size_t size)
@@ -960,6 +1133,10 @@ namespace imc
         }
         origin_ = read_string_u16(data, size, offset, "CO1 producer");
         origin_comment_ = read_string_u16(data, size, offset, "CO1 comment");
+        file_metadata_.producer = origin_;
+        file_metadata_.comment = origin_comment_;
+        file_metadata_.language_code = language_code_;
+        file_metadata_.codepage = codepage_;
 
         if ( peek_u32(data, size, offset, "header next key") == key_cd1 )
         {
@@ -1047,7 +1224,7 @@ namespace imc
         (void)read_double(data, size, offset, "CD1 y max");
       }
 
-      void skip_properties_key(const unsigned char* data, size_t size, size_t& offset)
+      std::vector<imc::property_metadata> parse_properties_key(const unsigned char* data, size_t size, size_t& offset)
       {
         if ( read_u32(data, size, offset, "CP1 key") != key_cp1 )
         {
@@ -1057,12 +1234,38 @@ namespace imc
         (void)read_u32(data, size, offset, "CP1 channel index");
         (void)read_u16(data, size, offset, "CP1 index bit");
         uint16_t count_elements = read_u16(data, size, offset, "CP1 element count");
+        std::vector<imc::property_metadata> properties;
+        properties.reserve(count_elements);
         for ( uint16_t i = 0; i < count_elements; ++i )
         {
-          (void)read_u16(data, size, offset, "CP1 option");
-          (void)read_string_u16(data, size, offset, "CP1 property name");
-          (void)read_string_u32(data, size, offset, "CP1 property value");
+          const uint16_t option = read_u16(data, size, offset, "CP1 option");
+          imc::property_metadata property;
+          property.name = read_string_u16(data, size, offset, "CP1 property name");
+          property.value = read_string_u32(data, size, offset, "CP1 property value");
+          property.type_code = static_cast<int>(option >> 8);
+          property.flags = static_cast<int>(option & 0xff);
+          properties.push_back(std::move(property));
         }
+        return properties;
+      }
+
+      void skip_properties_key(const unsigned char* data, size_t size, size_t& offset)
+      {
+        (void)parse_properties_key(data, size, offset);
+      }
+
+      void parse_text_key(const unsigned char* data, size_t size, size_t& offset)
+      {
+        if ( read_u32(data, size, offset, "Ct1 key") != key_ct1 )
+        {
+          throw std::runtime_error("invalid IMC3 text metadata key");
+        }
+        imc::text_object_metadata text;
+        text.group_index = read_u32(data, size, offset, "Ct1 group index");
+        text.name = read_string_u16(data, size, offset, "Ct1 name");
+        text.comment = read_string_u16(data, size, offset, "Ct1 comment");
+        text.content = read_string_u32(data, size, offset, "Ct1 content");
+        text_objects_metadata_.push_back(std::move(text));
       }
 
       bool normalize_local_numeric_event_descriptors(std::vector<imc::numeric_event_descriptor>& descriptors,
@@ -1331,9 +1534,26 @@ namespace imc
         std::string name = read_string_u16(data, size, offset, "CN1 name");
         std::string comment = read_string_u16(data, size, offset, "CN1 comment");
 
+        std::vector<imc::property_metadata> channel_properties;
         while ( offset < size && peek_u32(data, size, offset, "optional property key") == key_cp1 )
         {
-          skip_properties_key(data, size, offset);
+          std::vector<imc::property_metadata> properties = parse_properties_key(data, size, offset);
+          for ( imc::property_metadata& property : properties )
+          {
+            auto existing = std::find_if(
+              channel_properties.begin(),
+              channel_properties.end(),
+              [&](const imc::property_metadata& value) { return value.name == property.name; }
+            );
+            if ( existing == channel_properties.end() )
+            {
+              channel_properties.push_back(std::move(property));
+            }
+            else
+            {
+              *existing = std::move(property);
+            }
+          }
         }
 
         channel chn;
@@ -1345,6 +1565,7 @@ namespace imc
         chn.language_code_ = language_code_;
         chn.codepage_ = codepage_;
         chn.text_.clear();
+        chn.properties_ = std::move(channel_properties);
         chn.numeric_event_channel_ = is_numeric_event;
         chn.numeric_event_expected_count_ = numeric_event_expected_count;
         chn.group_index_ = group_index;
@@ -1562,6 +1783,12 @@ namespace imc
             continue;
           }
 
+          if ( next_key == key_ct1 )
+          {
+            parse_text_key(data, size, offset);
+            continue;
+          }
+
           if ( next_key != key_cc1 )
           {
             throw std::runtime_error("unsupported IMC3 metadata key while parsing channel descriptors");
@@ -1763,6 +1990,12 @@ namespace imc
             continue;
           }
 
+          if ( next_key == key_ct1 )
+          {
+            parse_text_key(data, size, offset);
+            continue;
+          }
+
           if ( next_key == key_rr1 )
           {
             (void)read_u32(data, size, offset, "RR1 key");
@@ -1905,6 +2138,77 @@ namespace imc
       imc::channel_metadata get_channel_metadata(const std::string& uuid) const
       {
         return get_channel(uuid).metadata();
+      }
+
+      imc::channel_representation get_channel_representation(const std::string& uuid) const
+      {
+        return get_channel(uuid).representation();
+      }
+
+      imc::file_metadata get_file_metadata() const
+      {
+        return file_metadata_;
+      }
+
+      std::vector<imc::group_metadata> get_groups_metadata() const
+      {
+        std::vector<imc::group_metadata> metadata;
+        metadata.reserve(groups_.size());
+        for ( const auto& entry : groups_ )
+        {
+          metadata.push_back({1, entry.second.index_, entry.second.name_, entry.second.comment_});
+        }
+        return metadata;
+      }
+
+      std::vector<imc::text_object_metadata> get_text_objects_metadata() const
+      {
+        return text_objects_metadata_;
+      }
+
+      uint64_t get_tsa_payload_size_bytes(const std::string& uuid) const
+      {
+        return get_channel(uuid).tsa_payload_size_bytes();
+      }
+
+      std::vector<unsigned char> read_tsa_payload(const std::string& uuid,
+                                                   uint64_t offset_bytes,
+                                                   uint64_t length_bytes) const
+      {
+        return get_channel(uuid).read_tsa_payload(offset_bytes, length_bytes);
+      }
+
+      std::vector<imc::tsa_record_descriptor> read_tsa_record_descriptors(
+        const std::string& uuid,
+        uint64_t start_record_ordinal,
+        uint64_t record_count
+      ) const
+      {
+        return get_channel(uuid).read_tsa_record_descriptors(start_record_ordinal, record_count);
+      }
+
+      std::vector<unsigned char> read_tsa_record_payload(const std::string& uuid,
+                                                          uint64_t record_ordinal) const
+      {
+        return get_channel(uuid).read_tsa_record_payload(record_ordinal);
+      }
+
+      std::vector<unsigned char> read_component_payload(const std::string& uuid,
+                                                         imc::channel_component component,
+                                                         uint64_t offset_bytes,
+                                                         uint64_t length_bytes) const
+      {
+        return get_channel(uuid).read_component_payload(component, offset_bytes, length_bytes);
+      }
+
+      std::vector<imc::tsa_channel_segment> get_tsa_channel_segments(const std::string& uuid) const
+      {
+        return get_channel(uuid).get_tsa_channel_segments();
+      }
+
+      std::vector<imc::numeric_channel_segment> get_numeric_channel_segments(const std::string& uuid) const
+      {
+        return get_channel(uuid).get_numeric_channel_segments();
       }
 
       std::vector<imc::channel_metadata> get_channels_metadata() const

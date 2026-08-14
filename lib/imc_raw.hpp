@@ -239,6 +239,122 @@ namespace imc
       return imc2_dataset_.get_channel_metadata(uuid);
     }
 
+    channel_representation get_channel_representation(const std::string& uuid) const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_channel_representation(uuid);
+      }
+
+      return imc2_dataset_.get_channel_representation(uuid);
+    }
+
+    file_metadata get_file_metadata() const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_file_metadata();
+      }
+      return imc2_dataset_.get_file_metadata();
+    }
+
+    std::vector<group_metadata> get_groups_metadata() const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_groups_metadata();
+      }
+      return imc2_dataset_.get_groups_metadata();
+    }
+
+    std::vector<text_object_metadata> get_text_objects_metadata() const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_text_objects_metadata();
+      }
+      return imc2_dataset_.get_text_objects_metadata();
+    }
+
+    uint64_t get_tsa_payload_size_bytes(const std::string& uuid)
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_tsa_payload_size_bytes(uuid);
+      }
+
+      return imc2_dataset_.get_tsa_payload_size_bytes(uuid);
+    }
+
+    std::vector<unsigned char> read_tsa_payload(const std::string& uuid,
+                                                 uint64_t offset_bytes,
+                                                 uint64_t length_bytes)
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.read_tsa_payload(uuid, offset_bytes, length_bytes);
+      }
+
+      return imc2_dataset_.read_tsa_payload(uuid, offset_bytes, length_bytes);
+    }
+
+    std::vector<tsa_record_descriptor> read_tsa_record_descriptors(
+      const std::string& uuid,
+      uint64_t start_record_ordinal,
+      uint64_t record_count
+    )
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.read_tsa_record_descriptors(uuid, start_record_ordinal, record_count);
+      }
+
+      return imc2_dataset_.read_tsa_record_descriptors(uuid, start_record_ordinal, record_count);
+    }
+
+    std::vector<unsigned char> read_tsa_record_payload(const std::string& uuid,
+                                                        uint64_t record_ordinal)
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.read_tsa_record_payload(uuid, record_ordinal);
+      }
+
+      return imc2_dataset_.read_tsa_record_payload(uuid, record_ordinal);
+    }
+
+    std::vector<unsigned char> read_component_payload(const std::string& uuid,
+                                                       channel_component component,
+                                                       uint64_t offset_bytes,
+                                                       uint64_t length_bytes) const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.read_component_payload(uuid, component, offset_bytes, length_bytes);
+      }
+      return imc2_dataset_.read_component_payload(uuid, component, offset_bytes, length_bytes);
+    }
+
+    std::vector<tsa_channel_segment> get_tsa_channel_segments(const std::string& uuid)
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_tsa_channel_segments(uuid);
+      }
+
+      return imc2_dataset_.get_tsa_channel_segments(uuid);
+    }
+
+    std::vector<numeric_channel_segment> get_numeric_channel_segments(const std::string& uuid) const
+    {
+      if ( format_ == file_format::imc3 )
+      {
+        return imc3_dataset_.get_numeric_channel_segments(uuid);
+      }
+
+      return imc2_dataset_.get_numeric_channel_segments(uuid);
+    }
+
     std::vector<channel_metadata> get_channels_metadata() const
     {
       if ( format_ == file_format::imc3 )

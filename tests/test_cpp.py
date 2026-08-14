@@ -136,7 +136,129 @@ CPP_PROBE_SOURCE = textwrap.dedent(
                   << R"(,"y_factor":)" << metadata.y_factor
                   << R"(,"y_offset":)" << metadata.y_offset
                   << R"(,"group_name":")" << imc::escape_json_string(metadata.group_name)
+                  << R"(","properties":)";
+        std::cout << "[";
+        for ( size_t index = 0; index < metadata.properties.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::property_metadata& property = metadata.properties[index];
+            std::cout << R"({"name":")" << imc::escape_json_string(property.name)
+                      << R"(","value":")" << imc::escape_json_string(property.value)
+                      << R"(","type_code":)" << property.type_code
+                      << R"(,"flags":)" << property.flags
+                      << "}";
+        }
+        std::cout << "]}";
+    }
+
+    void print_file_metadata(const imc::file_metadata& metadata)
+    {
+        std::cout << R"({"producer":")" << imc::escape_json_string(metadata.producer)
+                  << R"(","comment":")" << imc::escape_json_string(metadata.comment)
+                  << R"(","language_code":")" << imc::escape_json_string(metadata.language_code)
+                  << R"(","codepage":")" << imc::escape_json_string(metadata.codepage)
                   << R"("})";
+    }
+
+    void print_groups_metadata(const std::vector<imc::group_metadata>& groups)
+    {
+        std::cout << "[";
+        for ( size_t index = 0; index < groups.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::group_metadata& group = groups[index];
+            std::cout << R"({"index":)" << group.index
+                      << R"(,"name":")" << imc::escape_json_string(group.name)
+                      << R"(","comment":")" << imc::escape_json_string(group.comment)
+                      << R"("})";
+        }
+        std::cout << "]";
+    }
+
+    void print_text_objects_metadata(const std::vector<imc::text_object_metadata>& text_objects)
+    {
+        std::cout << "[";
+        for ( size_t index = 0; index < text_objects.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::text_object_metadata& text = text_objects[index];
+            std::cout << R"({"group_index":)" << text.group_index
+                      << R"(,"name":")" << imc::escape_json_string(text.name)
+                      << R"(","comment":")" << imc::escape_json_string(text.comment)
+                      << R"(","content":")" << imc::escape_json_string(text.content)
+                      << R"("})";
+        }
+        std::cout << "]";
+    }
+
+    void print_channel_representation(const imc::channel_representation& representation)
+    {
+        std::cout << R"({"schema_version":)" << representation.schema_version
+                  << R"(,"format":)" << static_cast<int>(representation.format)
+                  << R"(,"storage_kind":)" << static_cast<int>(representation.storage_kind)
+                  << R"(,"uuid":")" << imc::escape_json_string(representation.uuid)
+                  << R"(","has_generated_x_axis":)" << (representation.has_generated_x_axis ? "true" : "false")
+                  << R"(,"x_numeric_type":)" << representation.x_numeric_type
+                  << R"(,"y_numeric_type":)" << representation.y_numeric_type
+                  << R"(,"x_sample_width_bytes":)" << representation.x_sample_width_bytes
+                  << R"(,"y_sample_width_bytes":)" << representation.y_sample_width_bytes
+                  << R"(,"x_payload_size_bytes":)" << representation.x_payload_size_bytes
+                  << R"(,"y_payload_size_bytes":)" << representation.y_payload_size_bytes
+                  << R"(,"numeric_sample_count":)" << representation.numeric_sample_count
+                  << R"(,"segment_count":)" << representation.segment_count
+                  << R"(,"tsa_payload_size_bytes":)" << representation.tsa_payload_size_bytes
+                  << "}";
+    }
+
+    void print_tsa_record_descriptors(const std::vector<imc::tsa_record_descriptor>& descriptors)
+    {
+        std::cout << "[";
+        for ( size_t index = 0; index < descriptors.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::tsa_record_descriptor& descriptor = descriptors[index];
+            std::cout << R"({"record_ordinal":)" << descriptor.record_ordinal
+                      << R"(,"raw_timestamp":)" << descriptor.raw_timestamp
+                      << R"(,"timestamp":)" << descriptor.timestamp
+                      << R"(,"logical_payload_offset_bytes":)" << descriptor.logical_payload_offset_bytes
+                      << R"(,"payload_length_bytes":)" << descriptor.payload_length_bytes
+                      << "}";
+        }
+        std::cout << "]";
+    }
+
+    void print_tsa_channel_segments(const std::vector<imc::tsa_channel_segment>& segments)
+    {
+        std::cout << "[";
+        for ( size_t index = 0; index < segments.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::tsa_channel_segment& segment = segments[index];
+            std::cout << R"({"segment_ordinal":)" << segment.segment_ordinal
+                      << R"(,"raw_payload_offset_bytes":)" << segment.raw_payload_offset_bytes
+                      << R"(,"raw_payload_length_bytes":)" << segment.raw_payload_length_bytes
+                      << R"(,"is_source_defined":)" << (segment.is_source_defined ? "true" : "false")
+                      << "}";
+        }
+        std::cout << "]";
+    }
+
+    void print_numeric_channel_segments(const std::vector<imc::numeric_channel_segment>& segments)
+    {
+        std::cout << "[";
+        for ( size_t index = 0; index < segments.size(); ++index )
+        {
+            if ( index > 0 ) std::cout << ",";
+            const imc::numeric_channel_segment& segment = segments[index];
+            std::cout << R"({"segment_ordinal":)" << segment.segment_ordinal
+                      << R"(,"sample_offset":)" << segment.sample_offset
+                      << R"(,"sample_count":)" << segment.sample_count
+                      << R"(,"trigger_time_seconds_since_1980":)" << segment.trigger_time_seconds_since_1980
+                      << R"(,"x_start":)" << segment.x_start
+                      << R"(,"x_step_width":)" << segment.x_step_width
+                      << "}";
+        }
+        std::cout << "]";
     }
 
     template <typename EventPayload>
@@ -204,6 +326,165 @@ CPP_PROBE_SOURCE = textwrap.dedent(
 
             imc::raw raw(argv[2]);
             print_channel_metadata(raw.get_channel_metadata(argv[3]));
+            return 0;
+        }
+
+        if ( command == "get_channels_metadata_json" )
+        {
+            if ( argc != 3 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            const std::vector<imc::channel_metadata> metadata = raw.get_channels_metadata();
+            std::cout << "[";
+            for ( size_t index = 0; index < metadata.size(); ++index )
+            {
+                if ( index > 0 ) std::cout << ",";
+                print_channel_metadata(metadata[index]);
+            }
+            std::cout << "]";
+            return 0;
+        }
+
+        if ( command == "get_file_metadata_json" )
+        {
+            if ( argc != 3 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_file_metadata(raw.get_file_metadata());
+            return 0;
+        }
+
+        if ( command == "get_groups_metadata_json" )
+        {
+            if ( argc != 3 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_groups_metadata(raw.get_groups_metadata());
+            return 0;
+        }
+
+        if ( command == "get_text_objects_metadata_json" )
+        {
+            if ( argc != 3 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_text_objects_metadata(raw.get_text_objects_metadata());
+            return 0;
+        }
+
+        if ( command == "get_channel_representation_json" )
+        {
+            if ( argc != 4 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_channel_representation(raw.get_channel_representation(argv[3]));
+            return 0;
+        }
+
+        if ( command == "read_tsa_payload_json" )
+        {
+            if ( argc != 6 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            std::vector<unsigned char> payload = raw.read_tsa_payload(
+                argv[3],
+                static_cast<uint64_t>(std::stoull(argv[4])),
+                static_cast<uint64_t>(std::stoull(argv[5]))
+            );
+            print_array<unsigned char>(payload);
+            return 0;
+        }
+
+        if ( command == "read_tsa_record_descriptors_json" )
+        {
+            if ( argc != 6 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_tsa_record_descriptors(raw.read_tsa_record_descriptors(
+                argv[3],
+                static_cast<uint64_t>(std::stoull(argv[4])),
+                static_cast<uint64_t>(std::stoull(argv[5]))
+            ));
+            return 0;
+        }
+
+        if ( command == "read_tsa_record_payload_json" )
+        {
+            if ( argc != 5 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_array<unsigned char>(raw.read_tsa_record_payload(
+                argv[3],
+                static_cast<uint64_t>(std::stoull(argv[4]))
+            ));
+            return 0;
+        }
+
+        if ( command == "read_component_payload_json" )
+        {
+            if ( argc != 7 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            imc::channel_component component = std::string(argv[4]) == "x"
+                ? imc::channel_component::x
+                : imc::channel_component::y;
+            print_array<unsigned char>(raw.read_component_payload(
+                argv[3],
+                component,
+                static_cast<uint64_t>(std::stoull(argv[5])),
+                static_cast<uint64_t>(std::stoull(argv[6]))
+            ));
+            return 0;
+        }
+
+        if ( command == "get_tsa_channel_segments_json" )
+        {
+            if ( argc != 4 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_tsa_channel_segments(raw.get_tsa_channel_segments(argv[3]));
+            return 0;
+        }
+
+        if ( command == "get_numeric_channel_segments_json" )
+        {
+            if ( argc != 4 )
+            {
+                return 2;
+            }
+
+            imc::raw raw(argv[2]);
+            print_numeric_channel_segments(raw.get_numeric_channel_segments(argv[3]));
             return 0;
         }
 
@@ -364,6 +645,26 @@ CHUNK_PARITY_CASES = [
     (DATASET_B_DIR / "datasetB_1.raw", 0, False),
 ]
 
+COMPONENTS_DIR = SAMPLES_DIR / "components"
+METADATA_DIR = SAMPLES_DIR / "metadata"
+COMPONENT_PAYLOAD_SAMPLES = [
+    COMPONENTS_DIR / "imc2_component_payload_6byte.dat",
+    COMPONENTS_DIR / "imc3_component_payload_6byte.dat",
+]
+SIX_BYTE_Y_VALUES = [0, 1, 255, 256, 65535, 65536, 4294967295, 1099511627776, 281474976710655]
+SIX_BYTE_XY_X_VALUES = [0, 1, 255, 256, 65535, 65536]
+SIX_BYTE_XY_Y_VALUES = [281474976710655, 1099511627776, 4294967295, 65536, 256, 1]
+METADATA_SAMPLES = [
+    METADATA_DIR / "imc2_object_and_file_metadata.dat",
+    METADATA_DIR / "imc3_object_and_file_metadata.dat",
+]
+FIXTURE_PROPERTIES = [
+    {"name": "Fixture.Text", "value": "alpha,beta", "type_code": 0, "flags": 0},
+    {"name": "Fixture.Integer", "value": "212", "type_code": 1, "flags": 0},
+    {"name": "Fixture.Real", "value": "21.5", "type_code": 2, "flags": 0},
+    {"name": "Fixture.Boolean", "value": "1", "type_code": 5, "flags": 0},
+]
+
 NUMERIC_EVENT_SAMPLE_NAMES = [
     sample_name for sample_name, _ in (SUPPORTED_IMC2_NUMERIC_EVENT_SAMPLES + SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES)
 ]
@@ -371,6 +672,81 @@ NUMERIC_EVENT_SAMPLE_NAMES = [
 
 class TestCppFacade:
     """Regression tests for the legacy C++ facade surfaces."""
+
+    @pytest.mark.parametrize("sample", METADATA_SAMPLES)
+    def test_native_container_metadata_matches_fixture(self, sample, cpp_probe_binary):
+        sample = require_sample(sample)
+
+        def probe(command):
+            output = _run_cpp_probe(cpp_probe_binary, [command, str(sample)])
+            return json.loads(output[output.find("{") if output.lstrip().startswith("{") else output.find("["):])
+
+        file_metadata = probe("get_file_metadata_json")
+        groups = probe("get_groups_metadata_json")
+        text_objects = probe("get_text_objects_metadata_json")
+        channels = probe("get_channels_metadata_json")
+
+        assert file_metadata["producer"] == "Famos"
+        assert file_metadata["comment"] == "file comment: metadata fixture"
+        assert groups == [{"index": 1, "name": "MetadataGroup", "comment": "group comment"}]
+        assert text_objects == [{
+            "group_index": 1,
+            "name": "Readme",
+            "comment": "text object comment",
+            "content": "metadata fixture text object",
+        }]
+        assert len(channels) == 1
+        assert channels[0]["name"] == "Signal"
+        assert channels[0]["group_name"] == (
+            "Signal" if sample.name.startswith("imc2_") else "MetadataGroup"
+        )
+        assert channels[0]["properties"] == FIXTURE_PROPERTIES
+
+    @pytest.mark.parametrize("sample", COMPONENT_PAYLOAD_SAMPLES)
+    def test_component_payload_preserves_exact_six_byte_values(self, sample, cpp_probe_binary):
+        sample = require_sample(sample)
+        parser = ImcTermite(sample)
+        channels = parser.get_channels(include_data=False)
+        six_byte_y = next(
+            channel for channel in channels if (channel["name"] or channel["group"]["name"]) == "SixByteY"
+        )
+        six_byte_xy = next(
+            channel for channel in channels if (channel["name"] or channel["group"]["name"]) == "SixByteXY"
+        )
+
+        y_representation = json.loads(_run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_representation_json", str(sample), six_byte_y["uuid"]],
+        ))
+        xy_representation = json.loads(_run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_representation_json", str(sample), six_byte_xy["uuid"]],
+        ))
+        assert y_representation["y_numeric_type"] == 13
+        assert y_representation["y_sample_width_bytes"] == 6
+        assert y_representation["y_payload_size_bytes"] == len(SIX_BYTE_Y_VALUES) * 6
+        assert xy_representation["x_numeric_type"] == 13
+        assert xy_representation["y_numeric_type"] == 13
+        assert xy_representation["x_sample_width_bytes"] == 6
+        assert xy_representation["y_sample_width_bytes"] == 6
+
+        def read_payload(uuid, component, offset, length):
+            return json.loads(_run_cpp_probe(
+                cpp_probe_binary,
+                ["read_component_payload_json", str(sample), uuid, component, str(offset), str(length)],
+            ))
+
+        expected_y = list(b"".join(value.to_bytes(6, "little") for value in SIX_BYTE_Y_VALUES))
+        expected_x = list(b"".join(value.to_bytes(6, "little") for value in SIX_BYTE_XY_X_VALUES))
+        expected_xy_y = list(b"".join(value.to_bytes(6, "little") for value in SIX_BYTE_XY_Y_VALUES))
+        assert read_payload(six_byte_y["uuid"], "y", 0, len(expected_y)) == expected_y
+        assert read_payload(six_byte_xy["uuid"], "x", 0, len(expected_x)) == expected_x
+        assert read_payload(six_byte_xy["uuid"], "y", 0, len(expected_xy_y)) == expected_xy_y
+        assert read_payload(six_byte_xy["uuid"], "y", 5, 8) == expected_xy_y[5:13]
+        assert read_payload(six_byte_xy["uuid"], "y", len(expected_xy_y), 0) == []
+
+        promoted = parser.get_channel_data(six_byte_y["uuid"], include_x=False, mode="raw")["y"]
+        assert promoted.tolist() == SIX_BYTE_Y_VALUES
 
     def test_imc2_get_channel_matches_python_eager_load(self, cpp_probe_binary):
         """The legacy C++ get_channel facade should preserve IMC2 eager-load behavior."""
@@ -437,6 +813,38 @@ class TestCppFacade:
         assert typed_metadata["y_offset"] == float(json_metadata["offset"])
         assert typed_metadata["group_name"] == json_metadata["group"]["name"]
 
+    @pytest.mark.parametrize(
+        ("sample", "expected_format", "expected_generated_x_axis"),
+        [
+            (DATASET_A_DIR / "datasetA_1.raw", 0, True),
+            (IMC3_DIR / "imc3_sampleA.dat", 1, True),
+            (SAMPLES_DIR / "XY_dataset_example.dat", 0, False),
+        ],
+    )
+    def test_channel_representation_matches_existing_metadata(
+        self,
+        sample,
+        expected_format,
+        expected_generated_x_axis,
+        cpp_probe_binary,
+    ):
+        sample = require_sample(sample)
+        metadata = ImcTermite(str(sample).encode()).get_channels(include_data=False)[0]
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_channel_representation_json", str(sample), metadata["uuid"]],
+        )
+        representation = json.loads(run_output[run_output.find("{"):])
+
+        assert representation["schema_version"] == 1
+        assert representation["format"] == expected_format
+        assert representation["uuid"] == metadata["uuid"]
+        assert representation["has_generated_x_axis"] is expected_generated_x_axis
+        assert representation["y_numeric_type"] == int(metadata["datatype"])
+        assert representation["y_payload_size_bytes"] == int(metadata["buffer-size"])
+        assert representation["numeric_sample_count"] > 0
+
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_adapter_matches_python_eager_load(self, sample_name, cpp_probe_binary):
         sample = require_sample(TSA_DIR / sample_name)
@@ -454,6 +862,116 @@ class TestCppFacade:
         assert cpp_channel["datatype"] == python_channel["datatype"] == "10"
         assert cpp_channel["textdata"] == python_channel["textdata"]
         assert_exact_allclose(cpp_channel["xdata"], python_channel["xdata"])
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_physical_payload_is_exactly_reconstructable_from_ranges(self, sample_name, cpp_probe_binary):
+        sample = require_sample(TSA_DIR / sample_name)
+        channel = ImcTermite(str(sample).encode()).get_channels(include_data=False)[0]
+
+        full_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_payload_json", str(sample), channel["uuid"], "0", str(int(channel["buffer-size"]))],
+        )
+        full_payload = json.loads(full_output[full_output.find("["):])
+        midpoint = len(full_payload) // 2
+        first_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_payload_json", str(sample), channel["uuid"], "0", str(midpoint)],
+        )
+        second_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_payload_json", str(sample), channel["uuid"], str(midpoint), str(len(full_payload) - midpoint)],
+        )
+
+        assert json.loads(first_output[first_output.find("["):]) + json.loads(second_output[second_output.find("["):]) == full_payload
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_record_descriptors_match_decoded_record_order(self, sample_name, cpp_probe_binary):
+        sample = require_sample(TSA_DIR / sample_name)
+        parser = ImcTermite(str(sample).encode())
+        channel = parser.get_channels(include_data=False)[0]
+        events = parser.get_channel_events(channel["uuid"])
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_record_descriptors_json", str(sample), channel["uuid"], "0", str(len(events["texts"]))],
+        )
+        descriptors = json.loads(run_output[run_output.find("["):])
+
+        assert [descriptor["record_ordinal"] for descriptor in descriptors] == list(range(len(events["texts"])))
+        assert_exact_allclose([descriptor["timestamp"] for descriptor in descriptors], events["timestamps"])
+        assert all(descriptor["payload_length_bytes"] >= 0 for descriptor in descriptors)
+
+    @pytest.mark.parametrize("sample_name", ["imc2_TsaChannel.dat", "imc3_TsaChannel.dat"])
+    def test_tsa_record_payloads_preserve_the_logical_record_bytes(self, sample_name, cpp_probe_binary):
+        sample = require_sample(TSA_DIR / sample_name)
+        channel = ImcTermite(str(sample).encode()).get_channels(include_data=False)[0]
+
+        first_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_record_payload_json", str(sample), channel["uuid"], "0"],
+        )
+        second_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_record_payload_json", str(sample), channel["uuid"], "1"],
+        )
+
+        assert bytes(json.loads(first_output[first_output.find("["):])) == b"hello"
+        assert bytes(json.loads(second_output[second_output.find("["):])) == b"0123456789"
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_record_payload_lengths_match_descriptors(self, sample_name, cpp_probe_binary):
+        sample = require_sample(TSA_DIR / sample_name)
+        parser = ImcTermite(str(sample).encode())
+        channel = parser.get_channels(include_data=False)[0]
+        event_count = len(parser.get_channel_events(channel["uuid"])["texts"])
+
+        descriptor_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["read_tsa_record_descriptors_json", str(sample), channel["uuid"], "0", str(event_count)],
+        )
+        descriptors = json.loads(descriptor_output[descriptor_output.find("["):])
+        for descriptor in descriptors:
+            payload_output = _run_cpp_probe(
+                cpp_probe_binary,
+                ["read_tsa_record_payload_json", str(sample), channel["uuid"], str(descriptor["record_ordinal"])],
+            )
+            assert len(json.loads(payload_output[payload_output.find("["):])) == descriptor["payload_length_bytes"]
+
+    @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
+    def test_tsa_channel_segment_covers_the_complete_physical_payload(self, sample_name, cpp_probe_binary):
+        sample = require_sample(TSA_DIR / sample_name)
+        channel = ImcTermite(str(sample).encode()).get_channels(include_data=False)[0]
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_tsa_channel_segments_json", str(sample), channel["uuid"]],
+        )
+        segments = json.loads(run_output[run_output.find("["):])
+
+        assert segments == [{
+            "segment_ordinal": 0,
+            "raw_payload_offset_bytes": 0,
+            "raw_payload_length_bytes": int(channel["buffer-size"]),
+            "is_source_defined": False,
+        }]
+
+    @pytest.mark.parametrize("sample_name", NUMERIC_EVENT_SAMPLE_NAMES)
+    def test_numeric_channel_segments_match_existing_event_metadata(self, sample_name, cpp_probe_binary):
+        sample = require_sample(EVENTS_DIR / sample_name)
+        parser = ImcTermite(str(sample).encode())
+        channel = parser.get_channels(include_data=False)[0]
+        events = parser.get_channel_events(channel["uuid"])["events"]
+
+        run_output = _run_cpp_probe(
+            cpp_probe_binary,
+            ["get_numeric_channel_segments_json", str(sample), channel["uuid"]],
+        )
+        segments = json.loads(run_output[run_output.find("["):])
+
+        assert [segment["segment_ordinal"] for segment in segments] == list(range(len(events)))
+        assert [segment["sample_count"] for segment in segments] == [len(event["y"]) for event in events]
+        assert_exact_allclose([segment["trigger_time_seconds_since_1980"] for segment in segments], [event["timestamp"] for event in events])
 
     @pytest.mark.parametrize("sample_name", SUPPORTED_TSA_EVENT_SAMPLE_NAMES)
     def test_tsa_get_channel_events_matches_python(self, sample_name, cpp_probe_binary):

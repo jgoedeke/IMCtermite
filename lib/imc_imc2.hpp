@@ -32,6 +32,46 @@ namespace imc
       unsigned long int cplxcnt_ = 0;
       std::map<std::string,imc::channel> channels_;
       std::vector<std::string> channel_order_;
+      imc::file_metadata file_metadata_;
+      std::vector<imc::group_metadata> groups_metadata_;
+      std::vector<imc::text_object_metadata> text_objects_metadata_;
+
+      void collect_container_metadata()
+      {
+        file_metadata_ = {};
+        groups_metadata_.clear();
+        text_objects_metadata_.clear();
+        for ( imc::block& block : rawblocks_ )
+        {
+          const std::string key_name = block.get_key().name_;
+          if ( key_name == "NO" )
+          {
+            imc::origin_data origin;
+            origin.parse(buffer_, block.get_parameters());
+            file_metadata_.producer = origin.generator_;
+            file_metadata_.comment = origin.comment_;
+          }
+          else if ( key_name == "NL" )
+          {
+            imc::language language;
+            language.parse(buffer_, block.get_parameters());
+            file_metadata_.language_code = language.language_code_;
+            file_metadata_.codepage = language.codepage_;
+          }
+          else if ( key_name == "CB" )
+          {
+            imc::groupobj group;
+            group.parse(buffer_, block.get_parameters());
+            groups_metadata_.push_back({1, group.group_index_, group.name_, group.comment_});
+          }
+          else if ( key_name == "CT" )
+          {
+            imc::text text;
+            text.parse(buffer_, block.get_parameters());
+            text_objects_metadata_.push_back({1, text.group_index_, text.name_, text.comment_, text.text_});
+          }
+        }
+      }
 
       void check_consistency()
       {
@@ -253,11 +293,15 @@ namespace imc
       {
         channels_.clear();
         channel_order_.clear();
+        file_metadata_ = {};
+        groups_metadata_.clear();
+        text_objects_metadata_.clear();
 
         imc::channel_env chnenv;
         chnenv.reset();
 
         imc::component_env *compenv_ptr = nullptr;
+        std::vector<std::string> pending_property_uuids;
 
         auto finalize_channel = [&]()
         {
@@ -295,6 +339,7 @@ namespace imc
           chnenv.CSuuid_.clear();
           chnenv.Cvuuid_.clear();
           chnenv.CVuuid_.clear();
+          chnenv.Npuuids_.clear();
 
           chnenv.compenv1_.reset();
           chnenv.compenv2_.reset();
@@ -304,14 +349,39 @@ namespace imc
 
         for ( imc::block blk: rawblocks_ )
         {
+          if ( blk.get_key().name_ == "Np" )
+          {
+            if ( chnenv.CNuuid_.empty() )
+            {
+              pending_property_uuids.push_back(blk.get_uuid());
+            }
+            else
+            {
+              chnenv.Npuuids_.push_back(blk.get_uuid());
+            }
+            continue;
+          }
+          if ( blk.get_key().name_ == "CT" )
+          {
+            if ( !chnenv.CNuuid_.empty() )
+            {
+              finalize_channel();
+            }
+            continue;
+          }
+
           if ( blk.get_key().name_ == "NO" ) chnenv.NOuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "NL" ) chnenv.NLuuid_ = blk.get_uuid();
 
           else if ( blk.get_key().name_ == "CB" ) chnenv.CBuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
-          else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
-          else if ( blk.get_key().name_ == "CN" ) chnenv.CNuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "CN" )
+          {
+            chnenv.CNuuid_ = blk.get_uuid();
+            chnenv.Npuuids_ = std::move(pending_property_uuids);
+            pending_property_uuids.clear();
+          }
           else if ( blk.get_key().name_ == "CS" ) chnenv.CSuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "Cv" ) chnenv.Cvuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CV" ) chnenv.CVuuid_ = blk.get_uuid();
@@ -343,7 +413,7 @@ namespace imc
           if ( !chnenv.CNuuid_.empty() )
           {
             if ( blk.get_key().name_ == "CB" || blk.get_key().name_ == "CG"
-              || blk.get_key().name_ == "CI" || blk.get_key().name_ == "CT" )
+              || blk.get_key().name_ == "CI" )
             {
               finalize_channel();
             }
@@ -352,7 +422,6 @@ namespace imc
           if ( blk.get_key().name_ == "CB" ) chnenv.CBuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CG" ) chnenv.CGuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CI" ) chnenv.CIuuid_ = blk.get_uuid();
-          else if ( blk.get_key().name_ == "CT" ) chnenv.CTuuid_ = blk.get_uuid();
         }
 
         finalize_channel();
@@ -388,6 +457,7 @@ namespace imc
         parse_blocks();
         generate_block_map();
         generate_channel_env();
+        collect_container_metadata();
       }
 
       std::vector<imc::block>& blocks()
@@ -432,6 +502,103 @@ namespace imc
         if ( channels_.count(uuid) )
         {
           return channels_.at(uuid).metadata();
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      imc::channel_representation get_channel_representation(const std::string& uuid) const
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).representation();
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      imc::file_metadata get_file_metadata() const
+      {
+        return file_metadata_;
+      }
+
+      std::vector<imc::group_metadata> get_groups_metadata() const
+      {
+        return groups_metadata_;
+      }
+
+      std::vector<imc::text_object_metadata> get_text_objects_metadata() const
+      {
+        return text_objects_metadata_;
+      }
+
+      uint64_t get_tsa_payload_size_bytes(const std::string& uuid)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).tsa_payload_size_bytes();
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<unsigned char> read_tsa_payload(const std::string& uuid,
+                                                   uint64_t offset_bytes,
+                                                   uint64_t length_bytes)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).read_tsa_payload(offset_bytes, length_bytes);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<imc::tsa_record_descriptor> read_tsa_record_descriptors(
+        const std::string& uuid,
+        uint64_t start_record_ordinal,
+        uint64_t record_count
+      )
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).read_tsa_record_descriptors(start_record_ordinal, record_count);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<unsigned char> read_tsa_record_payload(const std::string& uuid,
+                                                          uint64_t record_ordinal)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).read_tsa_record_payload(record_ordinal);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<unsigned char> read_component_payload(const std::string& uuid,
+                                                         channel_component component,
+                                                         uint64_t offset_bytes,
+                                                         uint64_t length_bytes) const
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).read_component_payload(component, offset_bytes, length_bytes);
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<imc::tsa_channel_segment> get_tsa_channel_segments(const std::string& uuid)
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).get_tsa_channel_segments();
+        }
+        throw std::runtime_error(std::string("channel does not exist:") + uuid);
+      }
+
+      std::vector<imc::numeric_channel_segment> get_numeric_channel_segments(const std::string& uuid) const
+      {
+        if ( channels_.count(uuid) )
+        {
+          return channels_.at(uuid).get_numeric_channel_segments();
         }
         throw std::runtime_error(std::string("channel does not exist:") + uuid);
       }

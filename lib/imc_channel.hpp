@@ -7,8 +7,10 @@
 #include "imc_conversion.hpp"
 #include "imc_block.hpp"
 #include "imc_metadata.hpp"
+#include "imc_payload.hpp"
 #include <functional>
 #include <sstream>
+#include <cctype>
 #include <math.h>
 #include <algorithm>
 #include <chrono>
@@ -64,6 +66,99 @@ namespace imc
     }
 
     return escaped;
+  }
+
+  inline std::vector<property_metadata> parse_imc2_properties(
+    const unsigned char* buffer,
+    imc::block& property_block
+  )
+  {
+    const size_t end = property_block.get_end();
+    size_t position = property_block.get_begin();
+    int header_separator_count = 0;
+    while ( position <= end && header_separator_count < 3 )
+    {
+      if ( buffer[position++] == ch_sep_ )
+      {
+        header_separator_count++;
+      }
+    }
+    if ( header_separator_count != 3 )
+    {
+      throw std::runtime_error("invalid IMC2 property metadata block");
+    }
+
+    auto skip_spacing = [&]()
+    {
+      while ( position <= end && std::isspace(static_cast<unsigned char>(buffer[position])) )
+      {
+        position++;
+      }
+    };
+    auto read_quoted = [&]()
+    {
+      if ( position > end || buffer[position] != '"' )
+      {
+        throw std::runtime_error("invalid IMC2 property metadata string");
+      }
+      position++;
+      std::string value;
+      while ( position <= end )
+      {
+        const unsigned char character = buffer[position++];
+        if ( character == '"' )
+        {
+          if ( position <= end && buffer[position] == '"' )
+          {
+            value.push_back('"');
+            position++;
+            continue;
+          }
+          return value;
+        }
+        value.push_back(static_cast<char>(character));
+      }
+      throw std::runtime_error("unterminated IMC2 property metadata string");
+    };
+    auto read_integer = [&]()
+    {
+      const size_t start = position;
+      while ( position <= end && std::isdigit(static_cast<unsigned char>(buffer[position])) )
+      {
+        position++;
+      }
+      if ( start == position )
+      {
+        throw std::runtime_error("invalid IMC2 property metadata number");
+      }
+      return std::stoi(std::string(reinterpret_cast<const char*>(buffer + start), position - start));
+    };
+
+    std::vector<property_metadata> properties;
+    while ( position <= end )
+    {
+      skip_spacing();
+      if ( position > end || buffer[position] == ch_end_ )
+      {
+        break;
+      }
+      if ( buffer[position] == ch_sep_ )
+      {
+        position++;
+        skip_spacing();
+      }
+
+      property_metadata property;
+      property.name = read_quoted();
+      skip_spacing();
+      property.value = read_quoted();
+      skip_spacing();
+      property.type_code = read_integer();
+      skip_spacing();
+      property.flags = read_integer();
+      properties.push_back(std::move(property));
+    }
+    return properties;
   }
 
   struct tsa_event
@@ -496,6 +591,7 @@ namespace imc
     std::string CNuuid_, CDuuid_, NTuuid_;
     std::string CSuuid_;
     std::string CVuuid_, Cvuuid_;
+    std::vector<std::string> Npuuids_;
 
     component_env compenv1_;
     component_env compenv2_;
@@ -517,6 +613,7 @@ namespace imc
       CSuuid_.clear();
       CVuuid_.clear();
       Cvuuid_.clear();
+      Npuuids_.clear();
       compenv1_.reset();
       compenv2_.reset();
     }
@@ -778,6 +875,7 @@ namespace imc
     std::string uuid_;
     std::string name_, comment_;
     std::string origin_, origin_comment_, text_;
+    std::vector<property_metadata> properties_;
     std::chrono::system_clock::time_point trigger_time_, absolute_trigger_time_;
     double trigger_time_frac_secs_;
     std::string language_code_, codepage_;
@@ -862,6 +960,27 @@ namespace imc
 	language_code_ = NL_.language_code_;
       }
 
+      for ( const std::string& uuid : chnenv_.Npuuids_ )
+      {
+        std::vector<property_metadata> properties = parse_imc2_properties(buffer_, blocks_->at(uuid));
+        for ( property_metadata& property : properties )
+        {
+          auto existing = std::find_if(
+            properties_.begin(),
+            properties_.end(),
+            [&](const property_metadata& value) { return value.name == property.name; }
+          );
+          if ( existing == properties_.end() )
+          {
+            properties_.push_back(std::move(property));
+          }
+          else
+          {
+            *existing = std::move(property);
+          }
+        }
+      }
+
       // extract associated CB data
       if ( blocks_->count(chnenv_.CBuuid_) == 1 )
       {
@@ -881,6 +1000,9 @@ namespace imc
       if ( blocks_->count(chnenv_.CNuuid_) == 1 )
       {
         CN_.parse(buffer_, blocks_->at(chnenv_.CNuuid_).get_parameters());
+  name_ = CN_.name_;
+  yname_ = CN_.name_;
+  comment_ = CN_.comment_;
 	group_index_ = CN_.group_index_;
 	group_name_ = CN_.name_;
 	group_comment_ = CN_.comment_;
@@ -907,9 +1029,6 @@ namespace imc
         ybuffer_offset_ = comp_group1.Cb_.offset_buffer_;
         ybuffer_size_ = comp_group1.Cb_.number_bytes_;
         xstart_ = comp_group1.Cb_.x0_;
-        name_ = comp_group1.CN_.name_;
-        yname_ = comp_group1.CN_.name_;
-        comment_ = comp_group1.CN_.comment_;
         ynum_bytes_ = comp_group1.CP_.bytes_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
@@ -969,6 +1088,8 @@ namespace imc
         xbuffer_size_ = comp_group2.Cb_.number_bytes_;
         ybuffer_offset_ = comp_group1.Cb_.offset_buffer_;
         ybuffer_size_ = comp_group1.Cb_.number_bytes_;
+        xnum_bytes_ = comp_group2.CP_.bytes_;
+        ynum_bytes_ = comp_group1.CP_.bytes_;
         xdatatp_ = comp_group2.CP_.numeric_type_;
         xsignbits_ = comp_group2.CP_.signbits_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
@@ -1087,6 +1208,40 @@ namespace imc
       result.x_scaling_offset = xoffset_;
       result.y_factor = yfactor_;
       result.y_offset = yoffset_;
+      result.properties = properties_;
+      return result;
+    }
+
+    channel_representation representation() const
+    {
+      channel_representation result;
+      result.uuid = uuid_;
+      result.codepage = codepage_;
+      result.storage_kind = is_tsa_channel()
+        ? channel_storage_kind::tsa
+        : (is_numeric_event_channel()
+          ? channel_storage_kind::numeric_segmented
+          : (dimension_ == 2 ? channel_storage_kind::explicit_xy : channel_storage_kind::generated_numeric));
+      result.has_generated_x_axis = dimension_ != 2;
+      result.x_numeric_type = static_cast<int>(xdatatp_);
+      result.y_numeric_type = static_cast<int>(ydatatp_);
+      result.x_significant_bits = xsignbits_;
+      result.y_significant_bits = ysignbits_;
+      result.x_sample_width_bytes = static_cast<uint64_t>(xnum_bytes_);
+      result.y_sample_width_bytes = static_cast<uint64_t>(ynum_bytes_);
+      result.x_payload_size_bytes = static_cast<uint64_t>(xbuffer_size_);
+      result.y_payload_size_bytes = static_cast<uint64_t>(ybuffer_size_);
+      result.numeric_sample_count = static_cast<uint64_t>(
+        is_numeric_event_channel() ? numeric_event_total_samples_ : number_of_samples_
+      );
+      result.segment_count = static_cast<uint64_t>(
+        is_numeric_event_channel() ? numeric_event_index_.size() : 0
+      );
+      result.tsa_payload_size_bytes = static_cast<uint64_t>(
+        is_tsa_channel() ? ybuffer_size_ : 0
+      );
+      result.timestamp_factor = xfactor_;
+      result.timestamp_offset = xoffset_;
       return result;
     }
 
@@ -1103,11 +1258,11 @@ namespace imc
       textdata_.clear();
     }
 
-    void ensure_tsa_index()
+    void ensure_tsa_raw_payload()
     {
-      if ( !is_tsa_channel() || tsa_index_built_ )
+      if ( !is_tsa_channel() )
       {
-        return;
+        throw std::runtime_error("channel is numeric; TSA payload is unavailable");
       }
 
       if ( tsa_raw_data_ == nullptr )
@@ -1117,6 +1272,143 @@ namespace imc
         tsa_raw_data_ = buffer_ + buffstrt + ybuffer_offset_ + 1;
         tsa_raw_size_ = ybuffer_size_;
       }
+    }
+
+    uint64_t tsa_payload_size_bytes()
+    {
+      ensure_tsa_raw_payload();
+      return static_cast<uint64_t>(tsa_raw_size_);
+    }
+
+    std::vector<unsigned char> read_tsa_payload(uint64_t offset_bytes, uint64_t length_bytes)
+    {
+      ensure_tsa_raw_payload();
+      const uint64_t payload_size_bytes = static_cast<uint64_t>(tsa_raw_size_);
+      if ( offset_bytes > payload_size_bytes || length_bytes > payload_size_bytes - offset_bytes )
+      {
+        throw std::runtime_error("requested TSA payload range exceeds channel payload");
+      }
+
+      const unsigned char* start = tsa_raw_data_ + static_cast<size_t>(offset_bytes);
+      return std::vector<unsigned char>(start, start + static_cast<size_t>(length_bytes));
+    }
+
+    std::vector<tsa_record_descriptor> read_tsa_record_descriptors(uint64_t start_record_ordinal,
+                                                                     uint64_t record_count)
+    {
+      ensure_tsa_index();
+      if ( start_record_ordinal >= tsa_event_index_.size() || record_count == 0 )
+      {
+        return {};
+      }
+
+      const uint64_t available_records = static_cast<uint64_t>(tsa_event_index_.size()) - start_record_ordinal;
+      const uint64_t actual_record_count = (std::min)(record_count, available_records);
+      std::vector<tsa_record_descriptor> descriptors;
+      descriptors.reserve(static_cast<size_t>(actual_record_count));
+      for ( uint64_t index = 0; index < actual_record_count; ++index )
+      {
+        const tsa_event_descriptor& source = tsa_event_index_[static_cast<size_t>(start_record_ordinal + index)];
+        tsa_record_descriptor descriptor;
+        descriptor.record_ordinal = start_record_ordinal + index;
+        descriptor.raw_timestamp = source.raw_timestamp;
+        descriptor.timestamp = static_cast<double>(source.raw_timestamp) * xfactor_ + xoffset_;
+        descriptor.logical_payload_offset_bytes = static_cast<uint64_t>(source.text_offset);
+        descriptor.payload_length_bytes = static_cast<uint64_t>(source.text_length);
+        descriptors.push_back(descriptor);
+      }
+      return descriptors;
+    }
+
+    std::vector<unsigned char> read_tsa_record_payload(uint64_t record_ordinal)
+    {
+      ensure_tsa_index();
+      if ( record_ordinal >= tsa_event_index_.size() )
+      {
+        throw std::runtime_error("requested TSA record ordinal exceeds channel record count");
+      }
+
+      const tsa_event_descriptor& descriptor = tsa_event_index_[static_cast<size_t>(record_ordinal)];
+      const unsigned char* start = tsa_logical_stream_.data() + descriptor.text_offset;
+      return std::vector<unsigned char>(start, start + descriptor.text_length);
+    }
+
+    std::vector<unsigned char> read_component_payload(channel_component component,
+                                                       uint64_t offset_bytes,
+                                                       uint64_t length_bytes) const
+    {
+      if ( is_tsa_channel() )
+      {
+        throw std::runtime_error("channel is TSA; numeric component payload is unavailable");
+      }
+
+      const bool is_x_component = component == channel_component::x;
+      if ( is_x_component && dimension_ != 2 )
+      {
+        throw std::runtime_error("channel has generated X values; physical X component payload is unavailable");
+      }
+
+      const uint64_t payload_size = static_cast<uint64_t>(
+        is_x_component ? xbuffer_size_ : ybuffer_size_
+      );
+      if ( offset_bytes > payload_size || length_bytes > payload_size - offset_bytes )
+      {
+        throw std::runtime_error("requested component payload range exceeds channel payload");
+      }
+
+      std::vector<imc::parameter> parameters = blocks_->at(chnenv_.CSuuid_).get_parameters();
+      if ( parameters.size() < 4 )
+      {
+        throw std::runtime_error("CS block is invalid and features too few parameters");
+      }
+
+      const unsigned long int buffer_start = parameters[3].begin();
+      const unsigned long int component_offset = is_x_component ? xbuffer_offset_ : ybuffer_offset_;
+      const unsigned char* start = buffer_ + buffer_start + component_offset + 1 + offset_bytes;
+      return std::vector<unsigned char>(start, start + length_bytes);
+    }
+
+    std::vector<tsa_channel_segment> get_tsa_channel_segments()
+    {
+      const uint64_t payload_size_bytes = tsa_payload_size_bytes();
+      tsa_channel_segment segment;
+      segment.raw_payload_length_bytes = payload_size_bytes;
+      segment.trigger_time_seconds_since_1980 = metadata().absolute_trigger_time;
+      return {segment};
+    }
+
+    std::vector<numeric_channel_segment> get_numeric_channel_segments() const
+    {
+      if ( !is_numeric_event_channel() )
+      {
+        throw std::runtime_error("channel is not a numeric segmented channel");
+      }
+
+      std::vector<numeric_channel_segment> segments;
+      segments.reserve(numeric_event_index_.size());
+      for ( size_t index = 0; index < numeric_event_index_.size(); ++index )
+      {
+        const numeric_event_descriptor& source = numeric_event_index_[index];
+        numeric_channel_segment segment;
+        segment.segment_ordinal = static_cast<uint64_t>(index);
+        segment.sample_offset = source.start;
+        segment.sample_count = source.count;
+        segment.trigger_time_seconds_since_1980 = source.timestamp;
+        segment.x_start = source.xstart;
+        segment.x_step_width = source.xstepwidth;
+        segments.push_back(segment);
+      }
+      return segments;
+    }
+
+    void ensure_tsa_index()
+    {
+      if ( !is_tsa_channel() || tsa_index_built_ )
+      {
+        return;
+      }
+
+      ensure_tsa_raw_payload();
 
       tsa_index_data index = build_tsa_index(tsa_raw_data_, tsa_raw_size_);
       tsa_logical_stream_ = std::move(index.logical_stream);

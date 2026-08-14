@@ -12,6 +12,8 @@ DATASET_B_DIR = SAMPLES_DIR / "datasetB"
 EVENTS_DIR = SAMPLES_DIR / "events"
 IMC3_DIR = SAMPLES_DIR / "imc3"
 TSA_DIR = SAMPLES_DIR / "tsa"
+COMPONENTS_DIR = SAMPLES_DIR / "components"
+METADATA_DIR = SAMPLES_DIR / "metadata"
 
 CLI_PATH = PROJECT_ROOT / "imctermite"
 if sys.platform == "win32":
@@ -228,6 +230,10 @@ BASIC_SAMPLE_GROUP_NAMES = (
         ]
     }
     | {
+        "components/imc2_component_payload_6byte.dat": ["SixByteY", "SixByteXY"],
+        "components/imc3_component_payload_6byte.dat": ["SixByteY", "SixByteXY"],
+        "metadata/imc2_object_and_file_metadata.dat": ["Signal"],
+        "metadata/imc3_object_and_file_metadata.dat": ["MetadataGroup"],
         "exampleA-20230124.raw": ["Average"],
         "exampleA.raw": ["Mittelwert"],
         "exampleB-20230124.raw": ["Chan1", "Chan2"],
@@ -355,6 +361,24 @@ BASIC_SAMPLE_INFO_CASES = _with_basic_group_names((
         ["imc3/imc3_xy_dataset.dat"],
         datatypes=["8"],
         channel_names=["circle"],
+    )
+    | _build_basic_sample_info(
+        ["components/imc2_component_payload_6byte.dat"],
+        datatypes=["13", "13"],
+    )
+    | _build_basic_sample_info(
+        ["components/imc3_component_payload_6byte.dat"],
+        datatypes=["13", "13"],
+        channel_names=["SixByteY", "SixByteXY"],
+    )
+    | _build_basic_sample_info(
+        ["metadata/imc2_object_and_file_metadata.dat"],
+        datatypes=["8"],
+    )
+    | _build_basic_sample_info(
+        ["metadata/imc3_object_and_file_metadata.dat"],
+        datatypes=["8"],
+        channel_names=["Signal"],
     )
     | _build_basic_sample_info(
         [

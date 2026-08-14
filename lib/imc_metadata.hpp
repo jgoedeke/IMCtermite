@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 //---------------------------------------------------------------------------//
 
@@ -16,6 +17,41 @@ namespace imc
     numeric,
     tsa_event,
     numeric_event
+  };
+
+  struct property_metadata
+  {
+    int schema_version = 1;
+    std::string name;
+    std::string value;
+    int type_code = 0;
+    int flags = 0;
+  };
+
+  struct file_metadata
+  {
+    int schema_version = 1;
+    std::string producer;
+    std::string comment;
+    std::string language_code;
+    std::string codepage;
+  };
+
+  struct group_metadata
+  {
+    int schema_version = 1;
+    uint64_t index = 0;
+    std::string name;
+    std::string comment;
+  };
+
+  struct text_object_metadata
+  {
+    int schema_version = 1;
+    uint64_t group_index = 0;
+    std::string name;
+    std::string comment;
+    std::string content;
   };
 
   struct channel_metadata
@@ -53,6 +89,7 @@ namespace imc
     double x_scaling_offset = 0.0;
     double y_factor = 1.0;
     double y_offset = 0.0;
+    std::vector<property_metadata> properties;
 
     int kind_code() const
     {
