@@ -93,7 +93,7 @@ python3 -m pip install imctermite3
 ```
 
 The Python import remains `from imctermite import ImcTermite`. The distribution
-provides binary wheels for _Windows_ and _Linux_ with Python 3.10-3.13 and
+targets binary wheels for _Windows_ and _Linux_ on x86-64 with CPython 3.10-3.14 and
 requires NumPy, which pip installs automatically.
 
 Do not install `imctermite` and `imctermite3` in the same environment: both
