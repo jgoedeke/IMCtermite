@@ -2,9 +2,9 @@
 [![LICENSE](https://img.shields.io/github/license/RecordEvolution/IMCtermite)](https://img.shields.io/github/license/RecordEvolution/IMCtermite)
 [![STARS](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)
 ![Tests](https://github.com/RecordEvolution/IMCtermite/actions/workflows/test.yml/badge.svg)
-![CI Build Wheel](https://github.com/RecordEvolution/IMCtermite/actions/workflows/pypi-deploy.yml/badge.svg?branch=&event=push)
-[![PYPI](https://img.shields.io/pypi/v/IMCtermite.svg)](https://pypi.org/project/imctermite/)
-[![Python Version](https://img.shields.io/pypi/pyversions/imctermite)](https://pypi.org/project/imctermite/)
+![Release Please](https://github.com/jgoedeke/IMCtermite/actions/workflows/release-please.yml/badge.svg)
+[![PYPI](https://img.shields.io/pypi/v/imctermite3.svg)](https://pypi.org/project/imctermite3/)
+[![Python Version](https://img.shields.io/pypi/pyversions/imctermite3)](https://pypi.org/project/imctermite3/)
 
 # IMCtermite
 
@@ -38,6 +38,7 @@ Python module to integrate IMC measurement files into any ETL workflow.
 * [Build and Installation](#installation)
 * [Usage and Examples](#usage)
 * [Testing](#testing)
+* [Releases](#releases)
 * [References](#references)
 
 ## Format reference
@@ -84,18 +85,24 @@ make python-build
 
 #### Installation with pip
 
-The package is also available in the [Python Package Index](https://pypi.org)
-at [imctermite](https://pypi.org/project/imctermite/).
-To install the latest version simply do
+This fork is distributed as [imctermite3](https://pypi.org/project/imctermite3/)
+on the [Python Package Index](https://pypi.org). Once published, install it with
 
 ```Shell
-python3 -m pip install imctermite
+python3 -m pip install imctermite3
 ```
 
-which provides binary wheels for multiple architectures on _Windows_ and _Linux_
-and most _Python 3.x_ distributions. **Note:** Starting from version 3.0.0, 
-imctermite requires numpy as a dependency, which will be automatically 
-installed if not already present.
+The Python import remains `from imctermite import ImcTermite`. The distribution
+provides binary wheels for _Windows_ and _Linux_ with Python 3.10-3.13 and
+requires NumPy, which pip installs automatically.
+
+Do not install `imctermite` and `imctermite3` in the same environment: both
+provide the `imctermite` import package. To replace the original distribution:
+
+```Shell
+python3 -m pip uninstall imctermite
+python3 -m pip install imctermite3
+```
 
 However, if your platform/architecture is not supported you can still compile 
 the source distribution yourself, which requires _python3_setuptools_, _numpy_, 

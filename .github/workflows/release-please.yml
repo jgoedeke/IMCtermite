@@ -1,0 +1,67 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/build.yml
+    with:
+      release-tag: ${{ needs.release.outputs.tag_name }}
+
+  publish:
+    name: Publish to PyPI
+    needs: [release, build]
+    if: needs.release.outputs.release_created == 'true' && !contains(needs.release.outputs.tag_name, '-')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/imctermite3/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Get source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: source-wheels
+          path: dist/
+      - name: Get binary wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          pattern: binary-wheels-*
+          merge-multiple: true
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1

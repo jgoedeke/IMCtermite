@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "version-file": "VERSION",
+      "initial-version": "3.0.0",
+      "versioning": "prerelease",
+      "prerelease": false,
+      "include-component-in-tag": false
+    }
+  }
+}
