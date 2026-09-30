@@ -28,6 +28,7 @@ from tests.sample_manifest import (
     SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
+    imc2_shared_packed_buffer,
 )
 
 try:
@@ -672,6 +673,28 @@ NUMERIC_EVENT_SAMPLE_NAMES = [
 
 class TestCppFacade:
     """Regression tests for the legacy C++ facade surfaces."""
+
+    def test_shared_interleaved_buffer_payload(self, imc2_shared_packed_buffer, cpp_probe_binary):
+        sample = imc2_shared_packed_buffer
+        channel = ImcTermite(sample).get_channels(include_data=False)[0]
+
+        def probe(command, *args):
+            return json.loads(_run_cpp_probe(cpp_probe_binary, [command, str(sample), channel["uuid"], *args]))
+
+        representation = probe("get_channel_representation_json")
+        assert representation["numeric_sample_count"] == 6
+        assert representation["x_payload_size_bytes"] == 36
+        assert representation["y_payload_size_bytes"] == 12
+        expected_x = b"".join(value.to_bytes(6, "little") for value in [14650, 94647, 174668, 254679, 334653, 414679])
+        expected_y = b"\x00" * 10 + b"\x37\x00"
+        for component, expected in [("x", expected_x), ("y", expected_y)]:
+            assert bytes(probe("read_component_payload_json", component, "0", str(len(expected)))) == expected
+            assert bytes(probe("read_component_payload_json", component, "5", "7")) == expected[5:12]
+            assert probe("read_component_payload_json", component, str(len(expected)), "0") == []
+
+        eager = probe("get_channel_json")
+        assert_exact_allclose(eager["xdata"], [0.183125, 1.1830875, 2.18335, 3.1834875, 4.1831625, 5.1834875])
+        assert_exact_allclose(eager["ydata"], [0, 0, 0, 0, 0, 1.71875])
 
     @pytest.mark.parametrize("sample", METADATA_SAMPLES)
     def test_native_container_metadata_matches_fixture(self, sample, cpp_probe_binary):

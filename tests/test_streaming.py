@@ -23,6 +23,7 @@ from tests.sample_manifest import (
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
     SUPPORTED_IMC3_NUMERIC_EVENT_SAMPLES,
+    imc2_shared_packed_buffer,
 )
 
 try:
@@ -32,6 +33,27 @@ except ImportError:
 
 class TestStreaming:
     """Test iter_channel_numpy functionality"""
+
+    @pytest.mark.parametrize("chunk_rows", [1, 2, 4])
+    @pytest.mark.parametrize("mode", ["raw", "scaled"])
+    def test_shared_interleaved_buffer_chunks(self, imc2_shared_packed_buffer, chunk_rows, mode):
+        parser = ImcTermite(imc2_shared_packed_buffer)
+        channel = parser.get_channels(include_data=False)[0]
+        chunks = list(parser.iter_channel_numpy(channel["uuid"], chunk_rows=chunk_rows, mode=mode))
+        assert_chunk_start_progression(chunks, "y")
+        timestamps = np.array([14650, 94647, 174668, 254679, 334653, 414679], dtype=np.uint64)
+        values = np.array([0, 0, 0, 0, 0, 55], dtype=np.int16)
+        if mode == "scaled":
+            timestamps = timestamps * 0.0000125
+            values = values * 0.03125
+        else:
+            assert all(chunk["x"].dtype == np.uint64 for chunk in chunks)
+            assert all(chunk["y"].dtype == np.int16 for chunk in chunks)
+        assert_exact_allclose(np.concatenate([chunk["x"] for chunk in chunks]), timestamps)
+        assert_exact_allclose(np.concatenate([chunk["y"] for chunk in chunks]), values)
+        without_x = list(parser.iter_channel_numpy(channel["uuid"], chunk_rows=chunk_rows, mode=mode, include_x=False))
+        assert all("x" not in chunk for chunk in without_x)
+        assert_exact_allclose(np.concatenate([chunk["y"] for chunk in without_x]), values)
 
     @pytest.fixture
     def imc_instance(self):

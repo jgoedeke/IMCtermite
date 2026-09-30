@@ -19,6 +19,8 @@ from tests.sample_manifest import (
     SUPPORTED_TSA_EVENT_SAMPLE_NAMES,
     TSA_DIR,
     iter_sample_files,
+    imc2_shared_packed_buffer,
+    imc2_invalid_packed_buffer,
 )
 
 CLI = CLI_PATH
@@ -74,7 +76,13 @@ def assert_cli_basic_sample_info(output: str, expected: dict) -> None:
 
 class TestCLIBasics:
     """Test basic CLI functionality"""
-    
+
+    def test_invalid_packed_buffer_is_rejected(self, imc2_invalid_packed_buffer):
+        sample, expected_error = imc2_invalid_packed_buffer
+        result = subprocess.run([str(CLI), str(sample), "-c"], capture_output=True, text=True)
+        assert result.returncode != 0
+        assert expected_error in result.stdout + result.stderr
+
     def test_cli_exists(self):
         """CLI binary should exist"""
         assert CLI.exists(), f"CLI not found at {CLI}"
@@ -186,7 +194,23 @@ class TestChannelOperations:
 
 class TestCSVOutput:
     """Test CSV file generation"""
-    
+
+    def test_shared_interleaved_buffer_csv(self, imc2_shared_packed_buffer, tmp_path):
+        result = subprocess.run(
+            [str(CLI), str(imc2_shared_packed_buffer), "-c", "-d", str(tmp_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Packed XY" in result.stdout
+        csv_files = list(tmp_path.glob("*.csv"))
+        assert len(csv_files) == 1
+        rows = list(csv.reader(csv_files[0].read_text().splitlines()))
+        values = [[float(value) for value in row] for row in rows[2:]]
+        assert len(values) == 6
+        assert values[0] == pytest.approx([0.183125, 0])
+        assert values[-1] == pytest.approx([5.1834875, 1.71875])
+
     @pytest.fixture
     def sample_file(self):
         """Get path to sample file"""

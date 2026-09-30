@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import struct
 
 import numpy as np
 import pytest
@@ -18,6 +19,74 @@ METADATA_DIR = SAMPLES_DIR / "metadata"
 CLI_PATH = PROJECT_ROOT / "imctermite"
 if sys.platform == "win32":
     CLI_PATH = CLI_PATH.with_suffix(".exe")
+
+
+@pytest.fixture(params=[
+    pytest.param((consecutive, position), id=f"{consecutive}-{position}")
+    for consecutive in (1, 2, 3)
+    for position in ("original", "before_components", "between_components", "after_samples")
+])
+def imc2_shared_packed_buffer(tmp_path, request):
+    def block(key, payload, version=1):
+        if isinstance(payload, str):
+            payload = payload.encode("ascii")
+        return f"|{key},{version},{len(payload)},".encode("ascii") + payload + b";"
+
+    timestamps = [14650, 94647, 174668, 254679, 334653, 414679]
+    values = [0, 0, 0, 0, 0, 55]
+    consecutive, position = request.param
+    payload = b"".join(
+        b"".join(timestamp.to_bytes(6, "little") for timestamp in timestamps[start:start + consecutive])
+        + struct.pack(f"<{consecutive}h", *values[start:start + consecutive])
+        for start in range(0, len(values), consecutive)
+    )
+    raw = block("CF", "1", version=2) + block("CK", "1,1")
+    raw += block("CG", "2,2,2")
+    raw += block("CD", "1,1,1,s,0,0,0,0,2", version=2)
+    raw += block("NT", "1,1,1980,0,0,0")
+    raw += block("CC", "1,1")
+    raw += block("CP", f"1,2,4,16,0,{6 * consecutive},{consecutive},{6 * consecutive}")
+    raw += block("CR", "1,0.03125,0,1,0,")
+    raw += block("CN", "0,0,0,9,Packed XY,0,")
+    raw += block("CC", "2,1")
+    raw += block("CP", f"1,6,13,48,0,0,{consecutive},{2 * consecutive}")
+    raw += block("CR", "1,0.0000125,0,1,1,s")
+    description = block("Cb", f"1,0,1,1,0,{len(payload)},0,{len(payload)},1,0,0,")
+    if position == "original":
+        raw += description
+    elif position in ("before_components", "between_components"):
+        insertion = raw.index(b"|CC,") if position == "before_components" else raw.index(b"|CC,", raw.index(b"|CC,") + 1)
+        raw = raw[:insertion] + description + raw[insertion:]
+    raw += block("CS", b"1," + payload)
+    if position == "after_samples":
+        raw += description
+    sample = tmp_path / "imc2_shared_interleaved_buffer.dat"
+    sample.write_bytes(raw)
+    return sample
+
+
+@pytest.fixture(params=["incomplete_packet", "packet_size_overflow"])
+def imc2_invalid_packed_buffer(imc2_shared_packed_buffer, request):
+    sample = imc2_shared_packed_buffer
+    raw = sample.read_bytes()
+    if request.param == "incomplete_packet":
+        raw = raw.replace(b"0,48,0,48", b"0,49,0,49")
+        samples_begin = raw.index(b"|CS,")
+        samples_end = samples_begin + len(b"|CS,1,50,") + 50
+        raw = raw[:samples_end] + b"\xff" + raw[samples_end:]
+        raw = raw.replace(b"|CS,1,50,", b"|CS,1,51,")
+        expected_error = "whole number of packets"
+    else:
+        first_component = raw.index(b"|CP,")
+        packaging_begin = raw.index(b"|CP,", first_component + 1)
+        packaging_end = raw.index(b";", packaging_begin) + 1
+        maximum = (1 << (8 * struct.calcsize("@L"))) - 1
+        payload = f"1,6,13,48,0,0,{maximum},2".encode("ascii")
+        packaging = f"|CP,1,{len(payload)},".encode("ascii") + payload + b";"
+        raw = raw[:packaging_begin] + packaging + raw[packaging_end:]
+        expected_error = "packet size overflow"
+    sample.write_bytes(raw)
+    return sample, expected_error
 
 
 IMC3_PARITY_SAMPLES = [

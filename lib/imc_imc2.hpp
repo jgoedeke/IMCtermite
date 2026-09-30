@@ -302,6 +302,14 @@ namespace imc
 
         imc::component_env *compenv_ptr = nullptr;
         std::vector<std::string> pending_property_uuids;
+        std::map<std::pair<unsigned long int, unsigned long int>, std::vector<std::string>> buffer_descriptions;
+        for ( imc::block& block : rawblocks_ )
+        {
+          if ( block.get_key().name_ != "Cb" ) continue;
+          imc::buffer description;
+          description.parse(buffer_, block.get_parameters());
+          buffer_descriptions[{description.buffer_reference_, description.sample_index_}].push_back(block.get_uuid());
+        }
 
         auto finalize_channel = [&]()
         {
@@ -320,6 +328,28 @@ namespace imc
                 && blkCS.get_begin() > static_cast<unsigned long int>(stol(chnenv.uuid_)) )
               {
                 chnenv.CSuuid_ = blkCS.get_uuid();
+              }
+            }
+          }
+
+          if ( !chnenv.CSuuid_.empty() )
+          {
+            imc::data samples;
+            samples.parse(buffer_, mapblocks_.at(chnenv.CSuuid_).get_parameters());
+            for ( component_env* environment : {&chnenv.compenv1_, &chnenv.compenv2_} )
+            {
+              if ( environment->CPuuid_.empty() || !environment->Cbuuid_.empty() ) continue;
+              imc::packaging packaging;
+              packaging.parse(buffer_, mapblocks_.at(environment->CPuuid_).get_parameters());
+              const auto descriptions = buffer_descriptions.find({packaging.buffer_reference_, samples.index_});
+              if ( descriptions == buffer_descriptions.end() ) continue;
+              if ( descriptions->second.size() == 1 )
+              {
+                environment->Cbuuid_ = descriptions->second.front();
+              }
+              else
+              {
+                throw std::runtime_error("ambiguous IMC2 buffer reference for component " + environment->uuid_);
               }
             }
           }
@@ -406,7 +436,21 @@ namespace imc
             if (compenv_ptr == nullptr) chnenv.NTuuid_ = blk.get_uuid();
             else compenv_ptr->NTuuid_ = blk.get_uuid();
           }
-          else if ( blk.get_key().name_ == "Cb" ) compenv_ptr->Cbuuid_ = blk.get_uuid();
+          else if ( blk.get_key().name_ == "Cb" )
+          {
+            imc::buffer description;
+            description.parse(buffer_, blk.get_parameters());
+            for ( component_env* environment : {&chnenv.compenv1_, &chnenv.compenv2_} )
+            {
+              if ( environment->CPuuid_.empty() ) continue;
+              imc::packaging packaging;
+              packaging.parse(buffer_, mapblocks_.at(environment->CPuuid_).get_parameters());
+              if ( packaging.buffer_reference_ == description.buffer_reference_ )
+              {
+                environment->Cbuuid_ = blk.get_uuid();
+              }
+            }
+          }
           else if ( blk.get_key().name_ == "CP" ) compenv_ptr->CPuuid_ = blk.get_uuid();
           else if ( blk.get_key().name_ == "CR" ) compenv_ptr->CRuuid_ = blk.get_uuid();
 

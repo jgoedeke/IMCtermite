@@ -13,6 +13,7 @@
 #include <cctype>
 #include <math.h>
 #include <algorithm>
+#include <limits>
 #include <chrono>
 #include <ctime>
 #include <time.h>
@@ -839,6 +840,10 @@ namespace imc
         {
             Cb_.parse(buffer, blocks->at(compenv.Cbuuid_).get_parameters());
         }
+        else
+        {
+          throw std::runtime_error("missing Cb key for component " + compenv.uuid_);
+        }
         if (blocks->count(compenv.CRuuid_) == 1)
         {
             CR_.parse(buffer, blocks->at(compenv.CRuuid_).get_parameters());
@@ -891,6 +896,7 @@ namespace imc
     // unsigned long int byte_offset_;
     unsigned long int xbuffer_offset_, ybuffer_offset_;
     unsigned long int xbuffer_size_, ybuffer_size_;
+    imc::packaging xpackaging_{}, ypackaging_{};
     long int addtime_;
     imc::numtype xdatatp_, ydatatp_;
     std::vector<imc::datatype> xdata_, ydata_;
@@ -1032,6 +1038,8 @@ namespace imc
         ynum_bytes_ = comp_group1.CP_.bytes_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
+        ypackaging_ = comp_group1.CP_;
+        if ( !is_tsa_channel() ) configure_component_buffer(ypackaging_, ybuffer_offset_, ybuffer_size_);
         if ( ydatatp_ == numtype::timestamp_ascii )
         {
           if ( name_.empty() )
@@ -1094,6 +1102,10 @@ namespace imc
         xsignbits_ = comp_group2.CP_.signbits_;
         ydatatp_ = comp_group1.CP_.numeric_type_;
         ysignbits_ = comp_group1.CP_.signbits_;
+        xpackaging_ = comp_group2.CP_;
+        ypackaging_ = comp_group1.CP_;
+        configure_component_buffer(xpackaging_, xbuffer_offset_, xbuffer_size_);
+        configure_component_buffer(ypackaging_, ybuffer_offset_, ybuffer_size_);
         if (comp_group2.has_cr_ && xdatatp_ != numtype::two_byte_word_digital)
         {
           xfactor_ = comp_group2.CR_.factor_;
@@ -1131,6 +1143,44 @@ namespace imc
       // convert any non-UTF-8 codepage to UTF-8 and cleanse any text
       convert_encoding();
       cleanse_text();
+    }
+
+    static void configure_component_buffer(const imc::packaging& packaging,
+                                           unsigned long int& offset,
+                                           unsigned long int& size)
+    {
+      if ( packaging.bytes_ <= 0 || packaging.bytes_ > 8 || packaging.number_subsequent_samples_ == 0
+        || packaging.offset_ > size )
+      {
+        throw std::runtime_error("invalid IMC2 component packaging");
+      }
+      if ( packaging.distance_bytes_ == 0 )
+      {
+        offset += packaging.offset_;
+        size -= packaging.offset_;
+        return;
+      }
+      const unsigned long int width = static_cast<unsigned long int>(packaging.bytes_);
+      const unsigned long int maximum = (std::numeric_limits<unsigned long int>::max)();
+      if ( packaging.number_subsequent_samples_ > maximum / width )
+      {
+        throw std::runtime_error("invalid IMC2 component packaging: packet size overflow");
+      }
+      const unsigned long int group_bytes = width * packaging.number_subsequent_samples_;
+      if ( packaging.distance_bytes_ > maximum - group_bytes )
+      {
+        throw std::runtime_error("invalid IMC2 component packaging: packet size overflow");
+      }
+      const unsigned long int stride = group_bytes + packaging.distance_bytes_;
+      if ( size % stride != 0 )
+      {
+        throw std::runtime_error("invalid IMC2 packed buffer: storage must contain a whole number of packets");
+      }
+      const unsigned long int available = size - packaging.offset_;
+      const unsigned long int samples = (available / stride) * packaging.number_subsequent_samples_
+        + (std::min)(available % stride, group_bytes) / width;
+      offset += packaging.offset_;
+      size = samples * width;
     }
 
     void set_chunk_reader(channel_chunk_reader chunk_reader)
@@ -1364,8 +1414,28 @@ namespace imc
 
       const unsigned long int buffer_start = parameters[3].begin();
       const unsigned long int component_offset = is_x_component ? xbuffer_offset_ : ybuffer_offset_;
-      const unsigned char* start = buffer_ + buffer_start + component_offset + 1 + offset_bytes;
-      return std::vector<unsigned char>(start, start + length_bytes);
+      const imc::packaging& packaging = is_x_component ? xpackaging_ : ypackaging_;
+      const unsigned char* source = buffer_ + buffer_start + component_offset + 1;
+      if ( packaging.distance_bytes_ == 0 )
+      {
+        return std::vector<unsigned char>(source + offset_bytes, source + offset_bytes + length_bytes);
+      }
+
+      const uint64_t group_bytes = static_cast<uint64_t>(packaging.bytes_)
+        * packaging.number_subsequent_samples_;
+      const uint64_t stride = group_bytes + packaging.distance_bytes_;
+      std::vector<unsigned char> result(static_cast<size_t>(length_bytes));
+      uint64_t copied = 0;
+      while ( copied < length_bytes )
+      {
+        const uint64_t logical = offset_bytes + copied;
+        const uint64_t within_group = logical % group_bytes;
+        const uint64_t physical = (logical / group_bytes) * stride + within_group;
+        const uint64_t count = (std::min)(length_bytes - copied, group_bytes - within_group);
+        std::copy(source + physical, source + physical + count, result.begin() + static_cast<size_t>(copied));
+        copied += count;
+      }
+      return result;
     }
 
     std::vector<tsa_channel_segment> get_tsa_channel_segments()
@@ -1621,7 +1691,7 @@ namespace imc
         return;
       }
 
-      if ( chunk_reader_ )
+      if ( chunk_reader_ || xpackaging_.distance_bytes_ != 0 || ypackaging_.distance_bytes_ != 0 )
       {
         channel_chunk chunk = read_chunk(0, number_of_samples_, true, false);
         const double* y_ptr = reinterpret_cast<const double*>(chunk.y_bytes.data());
@@ -1690,12 +1760,34 @@ namespace imc
         
         std::vector<imc::parameter> prms = blocks_->at(chnenv_.CSuuid_).get_parameters();
         unsigned long int buffstrt = prms[3].begin();
+        std::vector<unsigned char> packed_y;
+        const unsigned char* ysource = buffer_ + buffstrt + ybuffer_offset_ + 1;
+        unsigned long int ystart = start;
+        if ( ypackaging_.distance_bytes_ != 0 )
+        {
+          packed_y = read_component_payload(channel_component::y,
+            static_cast<uint64_t>(start) * static_cast<uint64_t>(ynum_bytes_),
+            static_cast<uint64_t>(actual_count) * static_cast<uint64_t>(ynum_bytes_));
+          ysource = packed_y.data();
+          ystart = 0;
+        }
+        std::vector<unsigned char> packed_x;
+        const unsigned char* xsource = buffer_ + buffstrt + xbuffer_offset_ + 1;
+        unsigned long int xstart = start;
+        if ( include_x && dimension_ == 2 && xpackaging_.distance_bytes_ != 0 )
+        {
+          packed_x = read_component_payload(channel_component::x,
+            static_cast<uint64_t>(start) * static_cast<uint64_t>(xnum_bytes_),
+            static_cast<uint64_t>(actual_count) * static_cast<uint64_t>(xnum_bytes_));
+          xsource = packed_x.data();
+          xstart = 0;
+        }
 
         // Handle Y data
         if (raw_mode) {
             int type = (int)ydatatp_;
             unsigned long int bytes_per_sample = ysignbits_ / 8;
-            unsigned long int abs_start = buffstrt + ybuffer_offset_ + 1 + start * bytes_per_sample;
+            const unsigned char* source = ysource + ystart * bytes_per_sample;
             unsigned long int byte_count = actual_count * bytes_per_sample;
             
             if (type == 13) { // six_byte_unsigned_long -> promote to 8 byte (uint64)
@@ -1703,15 +1795,15 @@ namespace imc
                 chunk.y_bytes.resize(actual_count * 8);
                 uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.y_bytes.data());
                 for (unsigned long int i = 0; i < actual_count; ++i) {
-                    unsigned long int src_idx = abs_start + i * 6;
+                    unsigned long int src_idx = i * 6;
                     uint64_t val = 0;
-                    for (int b = 0; b < 6; ++b) val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                    for (int b = 0; b < 6; ++b) val |= (uint64_t)source[src_idx + b] << (b * 8);
                     dest[i] = val;
                 }
             } else {
                 chunk.y_type = type;
                 chunk.y_bytes.resize(byte_count);
-                std::copy(buffer_ + abs_start, buffer_ + abs_start + byte_count, chunk.y_bytes.begin());
+                std::copy(source, source + byte_count, chunk.y_bytes.begin());
             }
         } else {
             // Scaled mode: convert to double
@@ -1719,21 +1811,19 @@ namespace imc
             chunk.y_bytes.resize(actual_count * sizeof(double));
             std::vector<double> temp_data;
             
-            unsigned long int abs_start = buffstrt + ybuffer_offset_ + 1; // Base start
-            
             switch (ydatatp_) {
-                case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, 1.0, 0.0, temp_data); break;
-                case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
-                case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(ysource, ystart, actual_count, 1.0, 0.0, temp_data); break;
+                case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
+                case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(ysource, ystart, actual_count, yfactor_, yoffset_, temp_data); break;
                 default: throw std::runtime_error("Unsupported type for scaled chunk reading (Y): " + std::to_string(ydatatp_));
             }
             
@@ -1745,7 +1835,7 @@ namespace imc
             if (dimension_ == 2 && raw_mode) {
                 int type = (int)xdatatp_;
                 unsigned long int bytes_per_sample = xsignbits_ / 8;
-                unsigned long int abs_start = buffstrt + xbuffer_offset_ + 1 + start * bytes_per_sample;
+                const unsigned char* source = xsource + xstart * bytes_per_sample;
                 unsigned long int byte_count = actual_count * bytes_per_sample;
                 
                 if (type == 13) {
@@ -1753,15 +1843,15 @@ namespace imc
                     chunk.x_bytes.resize(actual_count * 8);
                     uint64_t* dest = reinterpret_cast<uint64_t*>(chunk.x_bytes.data());
                     for (unsigned long int i = 0; i < actual_count; ++i) {
-                        unsigned long int src_idx = abs_start + i * 6;
+                        unsigned long int src_idx = i * 6;
                         uint64_t val = 0;
-                        for (int b = 0; b < 6; ++b) val |= (uint64_t)buffer_[src_idx + b] << (b * 8);
+                        for (int b = 0; b < 6; ++b) val |= (uint64_t)source[src_idx + b] << (b * 8);
                         dest[i] = val;
                     }
                 } else {
                     chunk.x_type = type;
                     chunk.x_bytes.resize(byte_count);
-                    std::copy(buffer_ + abs_start, buffer_ + abs_start + byte_count, chunk.x_bytes.begin());
+                    std::copy(source, source + byte_count, chunk.x_bytes.begin());
                 }
             } else {
                 // Generated X or scaled X
@@ -1772,20 +1862,19 @@ namespace imc
                 if (dimension_ == 2) {
                      // Read X from file and scale
                      std::vector<double> temp_data;
-                     unsigned long int abs_start = buffstrt + xbuffer_offset_ + 1;
                      switch (xdatatp_) {
-                        case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(buffer_ + abs_start, start, actual_count, 1.0, 0.0, temp_data); break;
-                        case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
-                        case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(buffer_ + abs_start, start, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::unsigned_byte: imc::convert_chunk_to_double<imc_Ubyte>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_byte: imc::convert_chunk_to_double<imc_Sbyte>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::unsigned_short: imc::convert_chunk_to_double<imc_Ushort>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_short: imc::convert_chunk_to_double<imc_Sshort>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::unsigned_long: imc::convert_chunk_to_double<imc_Ulongint>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::signed_long: imc::convert_chunk_to_double<imc_Slongint>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::ffloat: imc::convert_chunk_to_double<imc_float>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::ddouble: imc::convert_chunk_to_double<imc_double>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::two_byte_word_digital: imc::convert_chunk_to_double<imc_digital>(xsource, xstart, actual_count, 1.0, 0.0, temp_data); break;
+                        case numtype::eight_byte_unsigned_long: imc::convert_chunk_to_double<uint64_t>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::six_byte_unsigned_long: imc::convert_chunk_to_double<imc_sixbyte>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
+                        case numtype::eight_byte_signed_long: imc::convert_chunk_to_double<int64_t>(xsource, xstart, actual_count, xfactor_, xoffset_, temp_data); break;
                         default: throw std::runtime_error("Unsupported type for scaled chunk reading (X): " + std::to_string(xdatatp_));
                     }
                     memcpy(ptr, temp_data.data(), temp_data.size() * sizeof(double));

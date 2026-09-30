@@ -73,6 +73,13 @@ pipe character of the next key.
 | CI     | single numerical value including unit |
 | Ca     | add reference key |
 
+## Packed Component Buffers
+
+Components may share a buffer and store their samples interleaved. The `CP` key
+describes each component's sample layout, while `Cb` identifies the buffer and
+its associated `CS` sample block. These associations use references rather than
+key proximity.
+
 ## Noncritical markers
 
 | marker | description |

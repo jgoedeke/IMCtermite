@@ -51,6 +51,8 @@ from tests.sample_manifest import (
     UNIFORM_X_INVARIANT_CHANNEL_CASES,
     require_sample,
     iter_sample_files,
+    imc2_shared_packed_buffer,
+    imc2_invalid_packed_buffer,
 )
 
 METADATA_DIR = SAMPLES_DIR / "metadata"
@@ -755,6 +757,20 @@ class TestJsonEscaping:
 
 class TestChannelStateRegression:
     """Regression tests for channel component state handling."""
+
+    def test_shared_interleaved_component_buffer(self, imc2_shared_packed_buffer):
+        parser = ImcTermite(imc2_shared_packed_buffer)
+        channel = parser.get_channels(include_data=True)[0]
+
+        assert parser.get_channel_length(channel["uuid"]) == 6
+        assert channel["group"]["name"] == "Packed XY"
+        assert_exact_allclose(channel["xdata"], [0.183125, 1.1830875, 2.18335, 3.1834875, 4.1831625, 5.1834875])
+        assert_exact_allclose(channel["ydata"], [0, 0, 0, 0, 0, 1.71875])
+
+    def test_invalid_packed_buffer_is_rejected(self, imc2_invalid_packed_buffer):
+        sample, expected_error = imc2_invalid_packed_buffer
+        with pytest.raises(RuntimeError, match=expected_error):
+            ImcTermite(sample)
 
     @staticmethod
     def _block(key: str, payload, version: int = 1) -> bytes:
