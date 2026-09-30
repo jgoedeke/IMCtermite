@@ -1,10 +1,10 @@
 
-[![LICENSE](https://img.shields.io/github/license/RecordEvolution/IMCtermite)](https://img.shields.io/github/license/RecordEvolution/IMCtermite)
-[![STARS](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)](https://img.shields.io/github/stars/RecordEvolution/IMCtermite)
-![Tests](https://github.com/RecordEvolution/IMCtermite/actions/workflows/test.yml/badge.svg)
-![Release Please](https://github.com/jgoedeke/IMCtermite/actions/workflows/release-please.yml/badge.svg)
-[![PYPI](https://img.shields.io/pypi/v/imctermite3.svg)](https://pypi.org/project/imctermite3/)
-[![Python Version](https://img.shields.io/pypi/pyversions/imctermite3)](https://pypi.org/project/imctermite3/)
+[![License](https://img.shields.io/github/license/jgoedeke/IMCtermite)](https://github.com/jgoedeke/IMCtermite/blob/main/LICENSE)
+[![Stars](https://img.shields.io/github/stars/jgoedeke/IMCtermite)](https://github.com/jgoedeke/IMCtermite/stargazers)
+[![Tests](https://img.shields.io/github/actions/workflow/status/jgoedeke/IMCtermite/test.yml?branch=main&label=tests)](https://github.com/jgoedeke/IMCtermite/actions/workflows/test.yml?query=branch%3Amain)
+[![Release](https://img.shields.io/github/actions/workflow/status/jgoedeke/IMCtermite/release-please.yml?branch=main&label=release)](https://github.com/jgoedeke/IMCtermite/actions/workflows/release-please.yml?query=branch%3Amain)
+[![PyPI](https://img.shields.io/pypi/v/imctermite3)](https://pypi.org/project/imctermite3/)
+[![Python versions](https://img.shields.io/pypi/pyversions/imctermite3)](https://pypi.org/project/imctermite3/)
 
 # IMCtermite
 
