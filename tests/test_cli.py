@@ -92,6 +92,11 @@ class TestCLIBasics:
         result = subprocess.run([str(CLI), "--help"], capture_output=True, text=True)
         assert result.returncode == 0
         assert "Usage:" in result.stdout or "usage:" in result.stdout.lower()
+        assert "IMC2" in result.stdout
+        assert "IMC3" in result.stdout
+        assert "imctermite <imc-file> [options]" in result.stdout
+        assert "samples/sampleA.raw" in result.stdout
+        assert (SAMPLES_DIR / "sampleA.raw").is_file()
     
     def test_version_output(self):
         """Should display version"""

@@ -38,7 +38,7 @@ Python module to integrate IMC measurement files into any ETL workflow.
 * [Build and Installation](#installation)
 * [Usage and Examples](#usage)
 * [Testing](#testing)
-* [Releases](#releases)
+* [Releases](https://github.com/jgoedeke/IMCtermite/releases)
 * [References](#references)
 
 ## Format reference
@@ -64,22 +64,27 @@ module.
 
 ### CLI tool
 
+Building the CLI requires a compiler supporting C++17.
+
 To build the CLI tool locally, use the default target `make` resulting
 in the binary `imctermite`. To ensure system-wide availability, the installation
 of the tool (in the default location `/usr/local/bin`) is done via
 
 ```
 make install
-````
+```
 
 which may require root permissions.
 
 ### Python
 
 To integrate the library into a customized ETL toolchain, several python targets
-are available. For a local in-place build that enables you to run the examples, use:
+are available. From the repository root, use a Python 3.10+ environment and a
+C++17 compiler. Install the build dependencies before building the extension
+in place:
 
-```
+```Shell
+python3 -m pip install "setuptools>=77.0.0" wheel Cython "numpy>=1.26.0"
 make python-build
 ```
 
@@ -104,9 +109,10 @@ python3 -m pip uninstall imctermite
 python3 -m pip install imctermite3
 ```
 
-However, if your platform/architecture is not supported you can still compile 
-the source distribution yourself, which requires _python3_setuptools_, _numpy_, 
-and an up-to-date compiler supporting C++11 standard (e.g. _gcc version >= 10.2.0_).
+If your platform/architecture has no compatible wheel, pip builds the source
+distribution instead. This requires Python 3.10+ and a compiler supporting
+C++17 (e.g. _gcc version >= 10.2.0_). Pip installs the declared build dependencies
+automatically in an isolated environment.
 
 ## Usage
 
@@ -137,8 +143,12 @@ do `imctermite sample-data.raw --listchannels`. No output files are
 written by default. Output files are written only when an existing (!) directory
 is provided as argument to the `--output` option. By default, every output file
 is written using a `,` delimiter. You may provide any custom separator with the
-option `--delimiter`. For example, in order to use `|`, the binary is called with
-options `imctermite sample-data.raw -b -c -s '|'`.
+option `--delimiter`. For example, to export CSV files using `|`:
+
+```Shell
+mkdir -p output
+imctermite samples/sampleA.raw -b -c -d output -s '|'
+```
 
 ### Python
 
@@ -148,7 +158,7 @@ of it by passing an IMC file to the constructor:
 ```Python
 from imctermite import ImcTermite
 
-imcraw = ImcTermite("sample/sampleA.raw")
+imcraw = ImcTermite("samples/sampleA.raw")
 ```
 
 An example of how to create an instance and obtain the list of channels is:
@@ -156,15 +166,13 @@ An example of how to create an instance and obtain the list of channels is:
 ```Python
 from imctermite import ImcTermite
 
-# declare and initialize instance of "imctermite" by passing an IMC file
-try :
+try:
     imcraw = ImcTermite("samples/sampleA.raw")
-except RuntimeError as e :
-    print("failed to load/parse IMC file: " + str(e))
-
-# obtain list of channels as list of dictionaries (without data)
-channels = imcraw.get_channels(False)
-print(channels)
+except RuntimeError as error:
+    print("failed to load/parse IMC file: " + str(error))
+else:
+    channels = imcraw.get_channels(False)
+    print(channels)
 ```
 
 ### Typed channel metadata
@@ -216,13 +224,7 @@ For large files, you can iterate over channel data in chunks as NumPy arrays. Th
 
 ## Testing
 
-Prepare the local test environment with `make prepare-test`, then run end-to-end tests with `make test`.
-
-The Python environment is expected to be prepared outside Make and already contain the required build and test dependencies.
-
-To emit the Python wrapper coverage report through the same target, ensure `pytest-cov` is installed and use `make test COVERAGE=1`.
-
-See [tests/README.md](tests/README.md) for details.
+See [tests/README.md](tests/README.md) for prerequisites, test commands, and coverage.
 
 ## References
 

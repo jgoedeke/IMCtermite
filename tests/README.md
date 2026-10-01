@@ -37,6 +37,8 @@ pytest tests/test_python.py
 
 ## Prerequisites
 
+Run the commands below from the repository root with Python 3.10+ and a C++17 compiler.
+
 ### Recommended: Explicit preparation
 
 Prepare the local extension build before using the make targets:
@@ -46,7 +48,8 @@ make prepare-test
 ```
 
 This expects the Python environment to already contain the external build and
-test dependencies you need, notably `Cython`, `numpy`, and `pytest`.
+test dependencies you need, notably `setuptools>=77.0.0`, `wheel`, `Cython`,
+`numpy>=1.26.0`, and `pytest`.
 
 If you want Python wrapper coverage through the same targets, install `pytest-cov`
 outside Make and run the same test target with `COVERAGE=1`.
@@ -56,7 +59,8 @@ outside Make and run the same test target with `COVERAGE=1`.
 Install the package in editable mode with test dependencies yourself if you prefer working from a virtualenv-managed install:
 
 ```bash
-pip install -e "python[test]"
+python -m pip install -e ".[test]"
+make
 ```
 
 Then run tests with pytest:
@@ -66,11 +70,12 @@ pytest
 
 ### Alternative: Manual prerequisites
 
-If you prefer to prepare the environment manually, build the extension locally and install pytest first:
+If you prefer to prepare the environment manually, install the dependencies and
+build both the CLI and extension before running tests:
 
 ```bash
-python setup.py build_ext --inplace
-pip install pytest
+python -m pip install "setuptools>=77.0.0" wheel Cython "numpy>=1.26.0" pytest
+make prepare-test
 make test
 ```
 

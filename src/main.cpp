@@ -137,12 +137,12 @@ void show_version()
 void show_usage()
 {
   std::cout<<"\n"
-           <<"imctermite ["<<version<<"] (https://github.com/RecordEvolution/IMCtermite.git)"
+           <<"imctermite ["<<version<<"] (https://github.com/jgoedeke/IMCtermite)"
            <<"\n\n"
-           <<"Decode IMC raw files and dump data as *.csv"
+           <<"Decode IMC2 and IMC3 measurement files (.raw, .dat) and dump data as *.csv"
            <<"\n\n"
            <<"Usage:\n\n"
-           <<" imctermite <raw-file> [options]"
+           <<" imctermite <imc-file> [options]"
            <<"\n\n"
            <<"Options:"
            <<"\n\n"
@@ -155,8 +155,9 @@ void show_usage()
            <<" -h, --help              show this help message \n"
            <<" -v, --version           display version\n"
            <<"\n"
-           <<"Example:"
-           <<" $ ./imctermite sample/data_A.raw -c -b -d ./data -s ','"
+           <<"Example:\n"
+           <<" $ mkdir -p output\n"
+           <<" $ ./imctermite samples/sampleA.raw -c -b -d output -s ','"
            <<"\n\n";
 }
 
