@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/jgoedeke/IMCtermite/compare/v3.0.0...v3.1.0) (2026-10-01)
+
+
+### Features
+
+* **packaging:** add Python 3.14 wheel builds and CI coverage ([872cfbd](https://github.com/jgoedeke/IMCtermite/commit/872cfbd186471d76a911f9f579393cc1e93480db))
+
 ## [3.0.0](https://github.com/jgoedeke/IMCtermite/compare/v3.0.0-rc2...v3.0.0) (2026-09-30)
 
 
