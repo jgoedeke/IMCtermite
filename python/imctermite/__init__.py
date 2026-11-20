@@ -237,6 +237,22 @@ class ImcTermite:
 
         return self._native.get_channels(include_data)
 
+    def get_channel_x_bounds(self, channeluuid: str | bytes) -> tuple[float, float] | None:
+        """Return a numeric channel's minimum and maximum scaled x-values.
+
+        Scans bounded chunks, including interior extrema, without exporting
+        sample arrays to Python. The bounds retain the decimal precision of
+        ``get_channels(include_data=True)``; they are not absolute timestamps.
+        Empty numeric channels return ``None``. Event channels must use the
+        event APIs because their timestamps have different semantics.
+
+        Raises:
+            RuntimeError: If the channel is unknown, event-based, or unreadable.
+            ValueError: If sample data cannot be represented as finite JSON values.
+        """
+
+        return self._native.get_channel_x_bounds(channeluuid)
+
     def get_channel_metadata(self, channeluuid: str | bytes) -> ChannelMetadata:
         """Return typed metadata for one channel without loading sample data.
 

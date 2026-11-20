@@ -229,6 +229,49 @@ namespace imc
       return imc2_dataset_.get_channels(json, include_data);
     }
 
+    std::string get_channel_x_bounds(const std::string& uuid)
+    {
+      imc::channel channel = get_channel(uuid);
+      if ( channel.is_event_channel() )
+      {
+        throw std::runtime_error("event channel x bounds require event timestamps; use get_channel_events() instead");
+      }
+
+      std::vector<double> bounds;
+      unsigned long int start = 0;
+      while ( start < channel.number_of_samples_ )
+      {
+        unsigned long int count = (std::min)(65536UL, channel.number_of_samples_ - start);
+        channel_chunk chunk = channel.read_chunk(start, count, true, false);
+        if ( chunk.count == 0 || chunk.count > count
+          || chunk.x_bytes.size() != chunk.count * sizeof(double)
+          || chunk.y_bytes.size() != chunk.count * sizeof(double) )
+        {
+          throw std::runtime_error("invalid numeric chunk while reading channel x bounds");
+        }
+
+        const double* x_values = reinterpret_cast<const double*>(chunk.x_bytes.data());
+        const double* y_values = reinterpret_cast<const double*>(chunk.y_bytes.data());
+        for ( unsigned long int index = 0; index < chunk.count; ++index )
+        {
+          if ( !std::isfinite(x_values[index]) || !std::isfinite(y_values[index]) )
+          {
+            throw std::invalid_argument("non-finite channel data cannot be represented by the legacy JSON API");
+          }
+          if ( bounds.empty() )
+          {
+            bounds = {x_values[index], x_values[index]};
+          }
+          bounds[0] = (std::min)(bounds[0], x_values[index]);
+          bounds[1] = (std::max)(bounds[1], x_values[index]);
+        }
+        start += chunk.count;
+      }
+
+      // Round only the extrema, with exactly the same precision as legacy xdata.
+      return imc::joinvec<double>(bounds, 0, channel.xprec_, true);
+    }
+
     channel_metadata get_channel_metadata(const std::string& uuid) const
     {
       if ( format_ == file_format::imc3 )

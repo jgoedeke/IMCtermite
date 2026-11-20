@@ -109,6 +109,7 @@ cdef extern from "imc_raw.hpp" namespace "imc":
 
     # get JSON list of channels
     vector[string] get_channels(bool json, bool data) except +
+    string get_channel_x_bounds(string uuid) except +
 
     # get typed channel metadata without sample data
     channel_metadata get_channel_metadata(string uuid) except +

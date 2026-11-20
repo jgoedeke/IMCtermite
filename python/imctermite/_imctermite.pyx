@@ -191,6 +191,10 @@ cdef class imctermite:
     chnlstjn = [jn.loads(chn.decode(get_codepage(chn),errors="ignore")) for chn in chnlst]
     return chnlstjn
 
+  def get_channel_x_bounds(self, channeluuid):
+    bounds = jn.loads(self.cppimc.get_channel_x_bounds(_as_bytes(channeluuid)))
+    return (float(bounds[0]), float(bounds[1])) if bounds else None
+
   def get_channel_metadata(self, channeluuid):
     return _decode_channel_metadata(self.cppimc.get_channel_metadata(_as_bytes(channeluuid)))
 
