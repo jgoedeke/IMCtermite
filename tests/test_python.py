@@ -173,6 +173,34 @@ class TestChannelListing:
         assert [channel['group']['name'] for channel in channels] == ['kanal1', 'kanal2', 'E06_6_121']
         assert [int(channel['uuid']) for channel in channels] == sorted(int(channel['uuid']) for channel in channels)
 
+    @pytest.mark.parametrize(
+        "sample_path",
+        [
+            SAMPLES_DIR / "sample_x_precision.raw",
+            SAMPLES_DIR / "XY_dataset_example.dat",
+            IMC3_DIR / "imc3_xy_dataset.dat",
+            IMC3_DIR / "imc3_sanitized_bundle.dat",
+        ],
+    )
+    def test_channel_x_bounds_match_legacy_data(self, sample_path):
+        parser = ImcTermite(require_sample(sample_path))
+        bounds = {
+            channel["uuid"]: parser.get_channel_x_bounds(channel["uuid"])
+            for channel in parser.get_channels(include_data=False)
+        }
+
+        for channel in parser.get_channels(include_data=True):
+            expected = (min(channel["xdata"]), max(channel["xdata"])) if channel["xdata"] else None
+            assert bounds[channel["uuid"]] == expected
+
+    def test_channel_x_bounds_reject_unknown_and_event_channels(self):
+        parser = ImcTermite(require_sample(EVENTS_DIR / "imc2_event_numeric_single_minimal.dat"))
+        with pytest.raises(RuntimeError, match="channel does not exist"):
+            parser.get_channel_x_bounds("missing")
+        channel = parser.get_channels(include_data=False)[0]
+        with pytest.raises(RuntimeError, match="event channel"):
+            parser.get_channel_x_bounds(channel["uuid"])
+
 
 class TestContainerMetadata:
     @pytest.mark.parametrize(
@@ -758,6 +786,20 @@ class TestJsonEscaping:
 class TestChannelStateRegression:
     """Regression tests for channel component state handling."""
 
+    def test_packed_channel_x_bounds_preserve_precision_and_interior_extrema(self, imc2_shared_packed_buffer):
+        raw = imc2_shared_packed_buffer.read_bytes()
+        raw = raw.replace((174668).to_bytes(6, "little"), (100).to_bytes(6, "little"))
+        raw = raw.replace((254679).to_bytes(6, "little"), (1000000).to_bytes(6, "little"))
+        imc2_shared_packed_buffer.write_bytes(raw)
+        parser = ImcTermite(imc2_shared_packed_buffer)
+        channel = parser.get_channels(include_data=False)[0]
+
+        bounds = parser.get_channel_x_bounds(channel["uuid"])
+
+        legacy = parser.get_channels(include_data=True)[0]["xdata"]
+        assert bounds == (min(legacy), max(legacy))
+        assert bounds == (0.00125, 12.5)
+
     def test_shared_interleaved_component_buffer(self, imc2_shared_packed_buffer):
         parser = ImcTermite(imc2_shared_packed_buffer)
         channel = parser.get_channels(include_data=True)[0]
@@ -789,6 +831,57 @@ class TestChannelStateRegression:
             + payload_bytes
             + b";"
         )
+
+    def _xy_sample(self, tmp_path, xvalues, yvalues):
+        xbytes = struct.pack(f"<{len(xvalues)}d", *xvalues)
+        ybytes = struct.pack(f"<{len(yvalues)}d", *yvalues)
+        raw = self._block("CF", "1", version=2) + self._block("CK", "1,1")
+        raw += self._block("CG", "2,2,2")
+        raw += self._block("CD", "1,1,1,s,0,0,0,0,2", version=2)
+        raw += self._block("NT", "1,1,2020,0,0,0")
+        raw += self._block("CC", "1,1")
+        raw += self._block("CP", "1,8,8,64,0,0,1,0")
+        raw += self._block("CR", "1,1,0,1,1,V")
+        raw += self._block("CN", "0,0,0,6,Signal,0,")
+        raw += self._block("Cb", f"1,0,1,1,0,{len(ybytes)},0,{len(ybytes)},1,0,0,")
+        raw += self._block("CC", "2,1")
+        raw += self._block("CP", "2,8,8,64,0,0,1,0")
+        raw += self._block("CR", "1,1,0,1,1,s")
+        raw += self._block("Cb", f"1,0,2,1,{len(ybytes)},{len(xbytes)},0,{len(xbytes)},1,0,0,")
+        raw += self._block("CS", b"1," + ybytes + xbytes)
+        sample = tmp_path / "axis_bounds.dat"
+        sample.write_bytes(raw)
+        return sample
+
+    @pytest.mark.parametrize(
+        "xvalues",
+        [
+            [],
+            [0.0000004996, 0.0000005004],
+            [1.0] * 65536 + [-3.1250000004, 2.1250000004, 1.0],
+        ],
+        ids=["empty", "rounding-at-microsecond-boundary", "multiple-chunks"],
+    )
+    def test_channel_x_bounds_empty_precision_and_chunk_boundaries(self, tmp_path, xvalues):
+        parser = ImcTermite(self._xy_sample(tmp_path, xvalues, [0.0] * len(xvalues)))
+        channel = parser.get_channels(include_data=False)[0]
+
+        bounds = parser.get_channel_x_bounds(channel["uuid"])
+
+        legacy = parser.get_channels(include_data=True)[0]["xdata"]
+        assert bounds == ((min(legacy), max(legacy)) if legacy else None)
+
+    @pytest.mark.parametrize("nonfinite_axis", ["x", "y"])
+    def test_channel_x_bounds_reject_nonfinite_payloads(self, tmp_path, nonfinite_axis):
+        values = {"x": [1.0, 2.0], "y": [3.0, 4.0]}
+        values[nonfinite_axis][1] = float("nan")
+        parser = ImcTermite(self._xy_sample(tmp_path, values["x"], values["y"]))
+        channel = parser.get_channels(include_data=False)[0]
+
+        with pytest.raises(ValueError):
+            parser.get_channels(include_data=True)
+        with pytest.raises(ValueError, match="non-finite"):
+            parser.get_channel_x_bounds(channel["uuid"])
 
     def test_component_state_is_reset_between_channels(self, tmp_path):
         reg_file = tmp_path / "channel_state_regression.dat"

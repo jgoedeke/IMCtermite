@@ -206,6 +206,24 @@ print(metadata.producer, metadata.comment)
 print(channel.properties)
 ```
 
+### Numeric x-axis bounds
+
+For recording-window inspection, use the compact bounds API instead of
+serializing every sample through `get_channels(include_data=True)`:
+
+```Python
+channel = imcraw.get_channels(include_data=False)[0]
+bounds = imcraw.get_channel_x_bounds(channel["uuid"])
+```
+
+For numeric channels, this returns `(minimum_x, maximum_x)`, or `None` when
+empty. It scans bounded chunks, so non-monotonic axes are supported without
+exporting full sample arrays to Python. Bounds preserve the legacy dictionary
+API's decimal rounding; they are scaled x-values, not absolute timestamps.
+Non-finite sample data is rejected as it is by the legacy JSON API.
+Event channels are rejected: use the event APIs to retain their timestamp
+semantics.
+
 ### TSA custom-decoder support
 
 For native custom decoders, `lib/imc_raw.hpp` provides copied TSA container
